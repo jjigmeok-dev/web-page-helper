@@ -1,0 +1,69 @@
+/* Base: page defaults only. Every foundation is unstyled by contract. */
+
+:root {
+  color-scheme: light dark;
+  --hf-fg: #18181b;
+  --hf-muted: #52525b;
+  --hf-surface: #ffffff;
+  --hf-surface-2: #f4f4f5;
+  --hf-border: #d4d4d8;
+  --hf-accent: #4f46e5;
+  --hf-accent-fg: #ffffff;
+  --hf-radius: 0.65rem;
+  --hf-focus: 0 0 0 3px rgb(79 70 229 / 0.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --hf-fg: #f4f4f5;
+    --hf-muted: #a1a1aa;
+    --hf-surface: #18181b;
+    --hf-surface-2: #27272a;
+    --hf-border: #3f3f46;
+    --hf-accent: #818cf8;
+    --hf-accent-fg: #18181b;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+  color: var(--hf-fg);
+  background: var(--hf-surface-2);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scroll lock used by modal dialogs. */
+html[data-hf-scroll-lock] {
+  overflow: hidden;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--hf-focus);
+  border-radius: 0.35rem;
+}
+
+/* Hidden must always win over consumer display rules. */
+[hidden] {
+  display: none !important;
+}
+
+/*
+ * Foundations expose state through data attributes so consumers can style
+ * them without the foundation knowing anything about CSS:
+ *   [data-state="open"] / [data-state="closed"]
+ *   [data-state="selected"] / [data-state="checked"] / [data-state="pressed"]
+ *   [data-active] on the keyboard cursor of listbox/combobox
+ *   [aria-expanded="true"], [aria-selected="true"], [aria-checked="true"]
+ */

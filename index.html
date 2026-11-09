@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>web-page-helper — headless foundations</title>
+    <link rel="stylesheet" href="/styles/base.css" />
+    <link rel="stylesheet" href="/styles/demo.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header>
+        <h1 class="page__title">Headless foundations, composed.</h1>
+        <p class="page__lede">
+          Every foundation below ships behavior and ARIA only — no classes, no inline styles, no CSS.
+          The surrounding markup styles them. User components assemble foundations into new elements.
+        </p>
+      </header>
+
+      <hf-example-card title="Composed user component" density="comfortable" open>
+        This body is light-DOM content slotted into the component's
+        <code>data-hf-slot="default"</code>, inside a <code>disclosure</code> foundation.
+        Toggle the density pills — that is a <code>radio-group</code> foundation.
+      </hf-example-card>
+
+      <div class="grid">
+        <section class="panel">
+          <h2 class="panel__title">disclosure</h2>
+          <div class="demo-disclosure" data-hf="disclosure">
+            <button class="hf-button" data-hf-part="trigger">What is headless?</button>
+            <div data-hf-part="panel">
+              Behavior and accessibility live in JS. Appearance lives in your CSS.
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel__title">accordion (single)</h2>
+          <div class="demo-accordion" data-hf="accordion" data-hf-options='{"type":"single","collapsible":true}'>
+            <div data-hf-part="item">
+              <h3><button class="hf-button" data-hf-part="trigger">Shipping</button></h3>
+              <div data-hf-part="panel">Ships in 2–4 business days.</div>
+            </div>
+            <div data-hf-part="item">
+              <h3><button class="hf-button" data-hf-part="trigger">Returns</button></h3>
+              <div data-hf-part="panel">30 days, no questions asked.</div>
+            </div>
+            <div data-hf-part="item">
+              <h3><button class="hf-button" data-hf-part="trigger">Support</button></h3>
+              <div data-hf-part="panel">Reply within one business day.</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel__title">tabs</h2>
+          <div class="demo-tabs" data-hf="tabs">
+            <div data-hf-part="list">
+              <button data-hf-part="tab">Overview</button>
+              <button data-hf-part="tab">Usage</button>
+              <button data-hf-part="tab">API</button>
+            </div>
+            <section data-hf-part="panel">Arrow keys move between tabs; Home and End jump.</section>
+            <section data-hf-part="panel">Mount with <code>data-hf="tabs"</code> and never rebuild.</section>
+            <section data-hf-part="panel">Each foundation returns a controller with <code>destroy()</code>.</section>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel__title">menu</h2>
+          <div class="demo-menu" data-hf="menu">
+            <button class="hf-button" data-hf-part="trigger">Actions</button>
+            <div data-hf-part="list">
+              <button data-hf-part="item">Rename</button>
+              <button data-hf-part="item">Duplicate</button>
+              <button data-hf-part="item" aria-disabled="true">Archive</button>
+              <button data-hf-part="item">Delete</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel__title">tooltip</h2>
+          <div class="demo-tooltip" data-hf="tooltip">
+            <button class="hf-button" data-hf-part="trigger">Focus or hover</button>
+            <div data-hf-part="content">Saves your draft locally</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel__title">popover</h2>
+          <div class="demo-popover" data-hf="popover">
+            <button class="hf-button" data-hf-part="trigger">Filters</button>
+            <div data-hf-part="content">
+              <strong>3 active filters</strong>
+              <p style="margin: 0.4rem 0 0">Escape or an outside click closes it.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel__title">switch &amp; toggle</h2>
+          <div class="demo-switch" data-hf="switch">
+            <button data-hf-part="control">
+              <span data-hf-part="thumb"></span>
+              <span>Notifications</span>
+            </button>
+          </div>
+          <div data-hf="toggle">
+            <button class="hf-button" data-hf-part="control">Pin to top</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel__title">radio-group</h2>
+          <div class="demo-radio" data-hf="radio-group" data-hf-options='{"value":"m"}'>
+            <button data-hf-part="radio" data-value="s">S</button>
+            <button data-hf-part="radio" data-value="m">M</button>
+            <button data-hf-part="radio" data-value="l">L</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel__title">listbox (multi)</h2>
+          <ul class="demo-listbox" data-hf="listbox" data-hf-options='{"multiple":true,"selected":["css"]}'>
+            <li data-hf-part="option" data-value="html">HTML</li>
+            <li data-hf-part="option" data-value="css">CSS</li>
+            <li data-hf-part="option" data-value="js">JavaScript</li>
+          </ul>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel__title">combobox</h2>
+          <div class="demo-combobox" data-hf="combobox">
+            <input data-hf-part="input" placeholder="Search a runtime…" />
+            <ul data-hf-part="listbox">
+              <li data-hf-part="option" data-value="node">Node.js</li>
+              <li data-hf-part="option" data-value="deno">Deno</li>
+              <li data-hf-part="option" data-value="bun">Bun</li>
+              <li data-hf-part="option" data-value="browser">Browser</li>
+            </ul>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel">
+        <h2 class="panel__title">dialog &amp; toast (imperative controllers)</h2>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap">
+          <button class="hf-button" id="open-dialog">Open dialog</button>
+          <button class="hf-button" id="show-toast">Show toast</button>
+          <button class="hf-button" id="toggle-card">Toggle card prop</button>
+        </div>
+      </section>
+    </main>
+
+    <div class="demo-dialog" data-hf="dialog" id="demo-dialog" hidden>
+      <div data-hf-part="content" aria-labelledby="demo-dialog-title">
+        <h2 id="demo-dialog-title" style="margin: 0">Delete project?</h2>
+        <p style="margin: 0; color: var(--hf-muted)">
+          This traps focus, closes on Escape or backdrop, and restores focus to the trigger.
+        </p>
+        <div style="display: flex; gap: 0.5rem; justify-content: flex-end">
+          <button class="hf-button" data-hf-part="close">Cancel</button>
+          <button class="hf-button" data-hf-part="close">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-toast" data-hf="toast" data-hf-options='{"timeout": 3500}'>
+      <div data-hf-part="region"></div>
+      <template data-hf-part="template">
+        <div data-hf-part="toast"><span data-hf-part="message"></span></div>
+      </template>
+    </div>
+
+    <script type="module">
+      import { start, use } from '/runtime/index.js';
+      import '/components/example-card/example-card.js';
+
+      start();
+
+      const dialog = use('#demo-dialog');
+      const toast = use('.demo-toast');
+      document.getElementById('open-dialog').addEventListener('click', () => dialog.open());
+      document.getElementById('show-toast').addEventListener('click', () => toast.show('Saved to your workspace'));
+
+      const card = document.querySelector('hf-example-card');
+      let open = true;
+      document.getElementById('toggle-card').addEventListener('click', () => {
+        open = !open;
+        card.setProps({ open, density: open ? 'comfortable' : 'compact' });
+      });
+    </script>
+  </body>
+</html>

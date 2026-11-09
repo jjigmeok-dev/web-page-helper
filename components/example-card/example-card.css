@@ -1,0 +1,80 @@
+/* <hf-example-card> — appearance only. */
+.example-card {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-surface);
+}
+
+.example-card__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.example-card__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.example-card__density {
+  display: inline-flex;
+  gap: 0.25rem;
+  padding: 0.15rem;
+  border: 1px solid var(--hf-border);
+  border-radius: 999px;
+}
+
+.example-card__density [data-hf-part='radio'] {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.55rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--hf-muted);
+  cursor: pointer;
+}
+
+.example-card__density [data-hf-part='radio'][aria-checked='true'] {
+  background: var(--hf-accent);
+  color: var(--hf-accent-fg);
+}
+
+.example-card__details {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.example-card__trigger {
+  justify-self: start;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--hf-border);
+  border-radius: 0.45rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.example-card__trigger[aria-expanded='true'] {
+  border-color: var(--hf-accent);
+  color: var(--hf-accent);
+}
+
+.example-card__panel {
+  font-size: 0.9rem;
+  color: var(--hf-muted);
+}
+
+/* Density is a prop, exposed as a data attribute on the host. */
+hf-example-card[density='comfortable'] .example-card {
+  padding: 1.4rem 1.5rem;
+  gap: 1.1rem;
+}
