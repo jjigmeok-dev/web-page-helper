@@ -5,13 +5,18 @@
  * - every element gets `data-hf-node="<path id>"` so clicks map to source nodes
  * - `/__studio/bridge.js` is injected before `</body>`
  *
- * Bound to 127.0.0.1 by default; there is no auth layer, so it must not be
- * exposed on a network interface.
+ * Binding:
+ * - default `127.0.0.1` (loopback only)
+ * - `--host 0.0.0.0` exposes it on the network for LAN/device testing. There is
+ *   no user system, so a network bind requires a token: every request must
+ *   carry `?token=` (set once, then the studio keeps it in the URL).
  */
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { extname, join, normalize, sep } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
+import { extname, join, normalize, resolve, sep } from 'node:path';
+import { networkInterfaces } from 'node:os';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { scanHtml } from '../scan/html.mjs';
 import { createApi } from './api.mjs';
@@ -68,6 +73,50 @@ export function instrumentHtml(source) {
   if (closeBody !== -1) out = `${out.slice(0, closeBody)}${BRIDGE_TAG}\n${out.slice(closeBody)}`;
   else out += `\n${BRIDGE_TAG}\n`;
   return { html: out, instrumented: true, problems: [] };
+}
+
+
+/* ------------------------------------------------------------------ host */
+
+/** Loopback check: `localhost`, `127.0.0.1`, `::1` never leave the machine. */
+export function isLoopback(host) {
+  const value = String(host).replace(/^\[|\]$/g, '').toLowerCase();
+  return value === 'localhost' || value === '127.0.0.1' || value === '::1' || value === '0:0:0:0:0:0:0:1';
+}
+
+/** Every non-internal IPv4 address, so the CLI can print a LAN URL. */
+export function lanAddresses() {
+  const out = [];
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== 'IPv4' || entry.internal) continue;
+      out.push(entry.address);
+    }
+  }
+  return out;
+}
+
+/**
+ * Compares a request token without leaking length or content through timing.
+ * Returns false for an absent/malformed token rather than throwing.
+ */
+export function tokenMatches(expected, provided) {
+  if (typeof provided !== 'string' || !provided) return false;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * A token is required whenever the bind is reachable from another machine.
+ * Generating one instead of refusing keeps `--host 0.0.0.0` a single flag, but
+ * the user has to be told what it is, or they cannot open the studio.
+ */
+export function resolveToken(host, requested) {
+  if (typeof requested === 'string' && requested.trim()) return requested.trim();
+  if (isLoopback(host)) return null;
+  return randomBytes(16).toString('hex');
 }
 
 function json(res, status, body) {
@@ -148,14 +197,45 @@ async function proxyRequest(req, res, target, pathname, search) {
 }
 
 /**
- * @param {{root: string, port?: number, host?: string, quiet?: boolean, proxy?: string}} options
+ * @param {{root: string, port?: number, host?: string, quiet?: boolean, proxy?: string,
+ *          token?: string|null, browseRoot?: string|null}} options
+ *
+ * `browseRoot` is the highest directory the folder picker may reach. It
+ * defaults to the project's parent so switching between sibling projects is
+ * one click, without exposing the whole filesystem.
  */
-export async function startStudio({ root, port = 4174, host = '127.0.0.1', quiet = false, proxy = null }) {
-  const api = createApi(root);
+export async function startStudio({
+  root,
+  port = 4174,
+  host = '127.0.0.1',
+  quiet = false,
+  proxy = null,
+  token = null,
+  browseRoot = null,
+}) {
+  // The project root is switchable at runtime, so it lives in one mutable
+  // state object instead of being captured by every helper.
+  const state = {
+    root: resolve(root),
+    browseRoot: resolve(browseRoot ?? join(resolve(root), '..')),
+    token: resolveToken(host, token),
+    host,
+  };
+  const api = createApi(() => state.root, { browseRoot: () => state.browseRoot, state });
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? host}`);
     const path = decodeURIComponent(url.pathname);
+
+    // A network bind is unauthenticated by design only for loopback. The token
+    // is checked before any routing so no handler can leak a file listing.
+    if (state.token) {
+      const provided = url.searchParams.get('token') ?? req.headers['x-hf-token'];
+      if (!tokenMatches(state.token, provided)) {
+        json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: 'a valid ?token= is required' });
+        return;
+      }
+    }
 
     try {
       // --- studio UI assets
@@ -188,7 +268,10 @@ export async function startStudio({ root, port = 4174, host = '127.0.0.1', quiet
       if (path.startsWith('/__api/')) {
         const action = path.slice('/__api/'.length).replace(/\/$/, '');
         if (req.method === 'GET') {
-          const { status, body } = await api.handle(action, { query: Object.fromEntries(url.searchParams) });
+          const query = Object.fromEntries(url.searchParams);
+          // The token is a transport concern, not an argument.
+          delete query.token;
+          const { status, body } = await api.handle(action, { query });
           json(res, status, body);
           return;
         }
@@ -210,7 +293,7 @@ export async function startStudio({ root, port = 4174, host = '127.0.0.1', quiet
       }
       let source;
       try {
-        source = await readSource(root, rel);
+        source = await readSource(state.root, rel);
       } catch (error) {
         // A project that also runs an API server keeps those routes working:
         // the studio serves files, the backend serves data.
@@ -254,16 +337,28 @@ export async function startStudio({ root, port = 4174, host = '127.0.0.1', quiet
   });
 
   const actual = server.address().port;
+  const query = state.token ? `?token=${state.token}` : '';
   if (!quiet) {
-    console.log(`\x1b[32m✓\x1b[0m studio http://${host}:${actual}/__studio`);
+    console.log(`\x1b[32m✓\x1b[0m studio http://${host}:${actual}/__studio${query}`);
+    if (!isLoopback(host)) {
+      for (const address of lanAddresses()) {
+        console.log(`\x1b[2m· lan\x1b[0m http://${address}:${actual}/__studio${query}`);
+      }
+      if (state.token) console.log(`\x1b[2m· token required on every request\x1b[0m`);
+    }
     if (proxy) console.log(`\x1b[2m· proxy ${proxy}\x1b[0m`);
-    console.log(`\x1b[36m·\x1b[0m project ${root}`);
+    console.log(`\x1b[36m·\x1b[0m project ${state.root}`);
+    console.log(`\x1b[36m·\x1b[0m browse ${state.browseRoot}`);
   }
 
   return {
     port: actual,
     host,
-    url: `http://${host}:${actual}/__studio`,
+    token: state.token,
+    get root() {
+      return state.root;
+    },
+    url: `http://${host}:${actual}/__studio${query}`,
     close: () => new Promise((resolve) => server.close(resolve)),
     server,
   };

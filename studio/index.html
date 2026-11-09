@@ -20,6 +20,7 @@
             <span>Page</span>
             <select id="page-select" aria-label="Page to edit"></select>
           </label>
+          <button type="button" class="btn" id="open-project" title="Load another project folder from disk">Open…</button>
           <button type="button" class="btn" id="reload-page" title="Reload the preview from disk">Reload</button>
           <button type="button" class="btn btn--ghost" id="undo-btn" title="Undo the last save">Undo</button>
           <button type="button" class="btn btn--primary" id="save-btn" disabled>Save</button>
@@ -96,6 +97,24 @@
         <footer class="diff__foot">
           <span id="diff-note" class="muted"></span>
           <button class="btn btn--primary" id="confirm-save" value="save">Write to disk</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="picker-dialog" class="diff picker">
+      <form method="dialog" class="diff__form">
+        <header class="diff__head">
+          <h2>Open a project folder</h2>
+          <button class="btn btn--ghost btn--sm" value="cancel">Close</button>
+        </header>
+        <div class="picker__bar">
+          <button type="button" class="btn btn--ghost btn--sm" id="picker-up">Up</button>
+          <span class="picker__path mono" id="picker-path">…</span>
+        </div>
+        <div class="diff__body picker__body" id="picker-body"></div>
+        <footer class="diff__foot">
+          <span id="picker-note" class="muted"></span>
+          <button type="button" class="btn btn--primary" id="picker-open" disabled>Open this folder</button>
         </footer>
       </form>
     </dialog>

@@ -38,6 +38,7 @@ const MIME = {
 const ok = (message) => console.log(`\x1b[32m✓\x1b[0m ${message}`);
 const info = (message) => console.log(`\x1b[36m·\x1b[0m ${message}`);
 const warn = (message) => console.log(`\x1b[33m!\x1b[0m ${message}`);
+const dim = (message) => console.log(`  \x1b[2m·\x1b[0m ${message}`);
 const fail = (message) => {
   console.error(`\x1b[31m✗\x1b[0m ${message}`);
   process.exitCode = 1;
@@ -473,7 +474,7 @@ function safeJoin(base, urlPath) {
  * project instead of always editing the toolkit.
  */
 /** Flags that consume the next argument; their value is not a path. */
-const VALUE_FLAGS = new Set(['--root', '-r', '--port', '-p', '--proxy']);
+const VALUE_FLAGS = new Set(['--root', '-r', '--port', '-p', '--proxy', '--host', '--token', '--browse-root']);
 
 function rootArg(args) {
   const index = args.findIndex((arg) => arg === '--root' || arg === '-r');
@@ -493,6 +494,33 @@ function rootArg(args) {
   return process.cwd();
 }
 
+/** `--host 0.0.0.0` binds beyond loopback; `--host` alone is a usage error. */
+function hostArg(args) {
+  const index = args.findIndex((arg) => arg === '--host');
+  if (index === -1) return '127.0.0.1';
+  const value = args[index + 1];
+  if (!value || value.startsWith('-')) throw new Error('--host needs an address (e.g. 0.0.0.0)');
+  return value;
+}
+
+/** `--token <value>` pins the access token; omitted on a LAN bind generates one. */
+function tokenArg(args) {
+  const index = args.findIndex((arg) => arg === '--token');
+  if (index === -1) return null;
+  const value = args[index + 1];
+  if (!value || value.startsWith('-')) throw new Error('--token needs a value');
+  return value;
+}
+
+/** `--browse-root <dir>` caps how far the folder picker may navigate. */
+function browseRootArg(args) {
+  const index = args.findIndex((arg) => arg === '--browse-root');
+  if (index === -1) return null;
+  const value = args[index + 1];
+  if (!value || value.startsWith('-')) throw new Error('--browse-root needs a directory');
+  return resolve(value);
+}
+
 /** `--proxy http://127.0.0.1:8000` forwards unknown routes to the app backend. */
 function proxyArg(args) {
   const index = args.findIndex((arg) => arg === '--proxy');
@@ -507,10 +535,22 @@ function proxyArg(args) {
 async function serve(args) {
   const portFlag = args.indexOf('--port');
   const port = Number(portFlag >= 0 ? args[portFlag + 1] : process.env.PORT) || 4173;
-  const host = '127.0.0.1';
   const root = rootArg(args);
+  const { isLoopback, lanAddresses, resolveToken, tokenMatches } = await import('./studio/server.mjs');
+  const host = hostArg(args);
+  const token = resolveToken(host, tokenArg(args));
 
   const server = createServer(async (req, res) => {
+    // Same rule as the studio: a network bind is token-gated so an accidental
+    // `--host 0.0.0.0` does not publish the project to the whole LAN.
+    if (token) {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? host}`);
+      const provided = url.searchParams.get('token') ?? req.headers['x-hf-token'];
+      if (!tokenMatches(token, provided)) {
+        res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' }).end('401 token required');
+        return;
+      }
+    }
     let target = safeJoin(root, req.url === '/' ? '/index.html' : req.url);
     if (!target) {
       res.writeHead(403).end('Forbidden');
@@ -536,7 +576,11 @@ async function serve(args) {
   });
 
   server.listen(port, host, () => {
-    ok(`dev server http://${host}:${port}`);
+    const query = token ? `?token=${token}` : '';
+    ok(`dev server http://${host}:${port}/${query}`);
+    if (!isLoopback(host)) {
+      for (const address of lanAddresses()) dim(`lan http://${address}:${port}/${query}`);
+    }
     info('edit files and reload — no build step, no watcher');
   });
 }
@@ -670,7 +714,15 @@ async function studio(args) {
   const root = rootArg(args);
   if (!existsSync(root)) return fail(`no such directory: ${root}`);
   const proxy = proxyArg(args);
-  const instance = await startStudio({ root, port, proxy });
+  const host = hostArg(args);
+  const browseRoot = browseRootArg(args);
+  if (browseRoot && !existsSync(browseRoot)) return fail(`no such browse root: ${browseRoot}`);
+  // A browse root that cannot reach the project makes the picker lie: it would
+  // list folders the server refuses to open. Require the project to be inside.
+  if (browseRoot && root !== browseRoot && !root.startsWith(browseRoot + sep)) {
+    return fail(`--browse-root ${browseRoot} does not contain ${root}`);
+  }
+  const instance = await startStudio({ root, port, host, proxy, token: tokenArg(args), browseRoot });
   info('pick an element, edit it, then Save — nothing is written until you confirm the diff');
   const shutdown = async () => {
     await instance.close();
@@ -693,7 +745,11 @@ async function main() {
   hf new component <name>        scaffold a user component
   hf new page <name>             scaffold a demo page
   hf serve [--port 4173]         static dev server
+  hf serve --host 0.0.0.0        serve on the network (phone / another machine)
   hf studio [--port 4174]        visual editor (select, edit, save)
+  hf studio --host 0.0.0.0       also listen on the network (LAN / phone testing)
+  hf studio --token <value>      pin the access token instead of generating one
+  hf studio --browse-root <dir>  limit how far the folder picker may navigate
   hf studio --proxy <url>        also forward unknown routes to the app backend
   hf projects add <dir>          register a frontend and profile it
   hf projects list               list registered projects

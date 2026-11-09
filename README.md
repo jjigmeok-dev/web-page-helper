@@ -5,7 +5,7 @@
 ```bash
 npm run studio          # http://127.0.0.1:4174/__studio — 비주얼 에디터
 npm run dev             # http://127.0.0.1:4173        — 정적 데모 서버
-npm test                # 131개 (브라우저 e2e 포함, Chromium 없으면 skip)
+npm test                # 142개 (브라우저 e2e 포함, Chromium 없으면 skip)
 ```
 
 CLI는 `npm run hf -- <명령>` 또는 `node tools/cli.mjs <명령>`으로 실행한다.
@@ -16,8 +16,8 @@ CLI는 `npm run hf -- <명령>` 또는 `node tools/cli.mjs <명령>`으로 실�
 | `hf new foundation <name>` | 헤드리스 파운데이션 스캐폴드 + `foundation/index.js` 등록 |
 | `hf new component <name>` | 유저 컴포넌트 `components/<name>/{<name>.js,<name>.css}` 스캐폴드 |
 | `hf new page <name>` | `pages/<name>.html` 스캐폴드 |
-| `hf serve [--port 4173] [--root <dir>]` | 정적 dev 서버 (빌드·watcher 없음) |
-| `hf studio [--port 4174] [--root <dir>] [--proxy <url>]` | 비주얼 에디터 |
+| `hf serve [--port 4173] [--root <dir>] [--host <addr>]` | 정적 dev 서버 (빌드·watcher 없음) |
+| `hf studio [--port 4174] [--root <dir>] [--host <addr>] [--token <v>] [--browse-root <dir>] [--proxy <url>]` | 비주얼 에디터 |
 | `hf projects add <dir>` | 프론트엔드를 등록하고 프로필 수집 |
 | `hf projects list` | 등록된 프로젝트 목록 |
 | `hf projects show <name>` | 프로필 전체 출력 (페이지·스타일시트·경고) |
@@ -27,6 +27,28 @@ CLI는 `npm run hf -- <명령>` 또는 `node tools/cli.mjs <명령>`으로 실�
 
 `--root`를 생략하면 **현재 디렉터리**를 대상으로 삼는다. 다른 프로젝트에서 `hf studio`를 실행하면
 그 프로젝트의 `index.html`/`pages/`를 연다. 툴킷 자체를 편집하려면 툴킷 루트에서 실행한다.
+
+## 호스팅: 로컬 / IP
+
+기본값은 `127.0.0.1`이고 이때는 토큰이 없다. 같은 네트워크의 폰이나 다른 PC에서 열려면 `--host`를 준다.
+
+```bash
+hf studio --host 0.0.0.0                    # → http://0.0.0.0:4174/__studio?token=…
+hf studio --host 0.0.0.0 --token my-secret  # 토큰 고정
+hf serve  --host 0.0.0.0                    # 데모 서버도 동일
+```
+
+루프백이 아닌 바인딩은 **항상 토큰이 필요하다**. `--token`을 생략하면 임의 토큰을 생성해 출력하고,
+`?token=`(또는 `x-hf-token` 헤더)이 없는 요청은 API·정적 파일·`/__studio` 셸까지 전부 401이다.
+출력되는 `lan` 줄이 실제 접속 주소다. 사용자 계정 개념이 없으므로 `0.0.0.0`은 신뢰된 네트워크에서만 쓴다.
+
+### 폴더 선택
+
+에디터 상단 `Open…`은 서버가 허용한 범위 안에서 로컬 디렉터리를 탐색해 다른 프로젝트를 연다.
+`.html`이 하나 이상 있는 폴더만 열 수 있고, 고르면 서버의 root가 바뀌어 **재시작 없이** 페이지·구조·미리보기가 전부 갱신된다.
+탐색 범위는 `--browse-root <dir>`로 제한하며 기본값은 현재 프로젝트의 부모다(형제 프로젝트를 바로 볼 수 있게).
+`--browse-root`는 프로젝트를 포함해야 하고, 그 밖을 가리키는 경로는 `OUT_OF_ROOT`로 거부한다.
+저장하지 않은 변경이 있으면 전환 전에 확인을 받는다.
 
 스캐폴드로 시작하는 흐름:
 
@@ -128,7 +150,7 @@ export const meta = {
 
 ## 스튜디오
 
-`npm run studio` → 브라우저에서 `/__studio`. 서버는 `127.0.0.1`에만 바인딩된다.
+`npm run studio` → 브라우저에서 `/__studio`. 기본 바인딩은 `127.0.0.1`이고, 네트워크에 열려면 `--host 0.0.0.0`(토큰 필수)을 준다 — [호스팅](#호스팅-로컬--ip) 참고.
 
 - **구조 트리 / 미리보기 클릭**: 같은 노드를 가리킨다.
 - **Pick in preview**: 기본 **켜짐**. 프리뷰에서 요소를 그냥 클릭하면 선택되고, 페이지 자체를 조작하려면 끈다.
@@ -240,6 +262,7 @@ npm test     # 131개: 스캐너, 편집 엔진, 저널, API, 서버, 프로필/
 `tests/foundation.test.mjs`는 Chromium에서 13개 파운데이션(`switch` 포함)의 키보드·포커스·ARIA 동작을 실제 이벤트로 확인한다.
 `tests/studio.test.mjs`는 실제 프로젝트를 임시 디렉터리에 복사해 HTTP 왕복까지 검증한다.
 `tests/studio.e2e.test.mjs`는 Chromium을 띄워 미리보기 선택 → 폼 편집 → diff 확인 → 디스크 검증과 stale 거부를 실제 UI로 확인한다. Chromium이 없으면 skip한다.
+`tests/hosting.test.mjs`는 호스트 바인딩과 토큰 게이트, 폴더 탐색의 탈출 차단, 프로젝트 전환 후 서빙 경로 변경을 덮는다.
 `tests/project.test.mjs`는 프로필 수집, 레지스트리(`HF_HOME`으로 격리), `GET /api/profile`, 입력 검증을 덮는다.
 `tests/owner.test.mjs`는 마크업/동작/스타일이 서로 다른 파일에 있는 프로젝트에서 소유권 판정을 검증한다.
 `tests/bootstrap.test.mjs`는 빈 파일·프래그먼트·`<body />`에 프레임을 적용하고, 스타일시트가 없을 때 생성되는지 검증한다.

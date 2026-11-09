@@ -79,6 +79,13 @@ const ui = {
   pendingCount: $('#pending-count'),
   pendingList: $('#pending-list'),
   pickToggle: $('#pick-toggle'),
+  openProject: $('#open-project'),
+  pickerDialog: $('#picker-dialog'),
+  pickerBody: $('#picker-body'),
+  pickerPath: $('#picker-path'),
+  pickerUp: $('#picker-up'),
+  pickerNote: $('#picker-note'),
+  pickerOpen: $('#picker-open'),
   diffDialog: $('#diff-dialog'),
   diffBody: $('#diff-body'),
   diffTitle: $('#diff-title'),
@@ -106,6 +113,10 @@ const ui = {
 
 async function api(action, { query, body, method } = {}) {
   const url = new URL(`/__api/${action}`, location.origin);
+  // The studio may be served on a network bind, where every request needs the
+  // token that was printed with the URL. Keep it in the query string.
+  const token = new URLSearchParams(location.search).get('token');
+  if (token) url.searchParams.set('token', token);
   for (const [key, value] of Object.entries(query ?? {})) url.searchParams.set(key, value);
   const response = await fetch(url, {
     method: method ?? (body ? 'POST' : 'GET'),
@@ -1659,6 +1670,135 @@ document.addEventListener('keydown', (event) => {
     const id = rows[nextIndex]?.dataset.id;
     if (id) select(id, { scroll: true, fromTree: true });
   }
+});
+
+/* ------------------------------------------------------- project picker */
+
+/**
+ * Browse the local filesystem for a project folder.
+ *
+ * The server confines browsing to its browse root, so this UI never has to
+ * decide what is allowed - it renders what it is given. Folders that contain
+ * at least one `.html` file are the ones worth opening; the rest are shown but
+ * cannot be opened, which tells the user why instead of failing after a click.
+ */
+const picker = { dir: null, openable: false };
+
+function closePicker() {
+  if (ui.pickerDialog.open) ui.pickerDialog.close();
+}
+
+async function browseTo(dir) {
+  ui.pickerBody.replaceChildren(el('p', { class: 'picker__empty', text: 'Reading folder…' }));
+  try {
+    const listing = await api('browse', { query: dir ? { dir } : {} });
+    picker.dir = listing.path;
+    picker.openable = listing.openable;
+    ui.pickerPath.textContent = listing.path;
+    ui.pickerPath.title = listing.path;
+    ui.pickerUp.disabled = !listing.parent;
+    ui.pickerOpen.disabled = !listing.openable;
+    ui.pickerNote.textContent = listing.openable
+      ? `${listing.pages.length} page${listing.pages.length === 1 ? '' : 's'} found`
+      : 'no .html files here — pick a folder that contains a page';
+
+    const rows = [];
+    for (const child of listing.dirs) {
+      rows.push(
+        el(
+          'button',
+          {
+            type: 'button',
+            class: 'picker__row',
+            onclick: () => browseTo(child.path),
+          },
+          el('span', { class: 'picker__icon', text: '▸' }),
+          el('span', { text: child.name }),
+        ),
+      );
+    }
+    if (!rows.length) rows.push(el('p', { class: 'picker__empty', text: 'no subfolders' }));
+    ui.pickerBody.replaceChildren(...rows);
+  } catch (error) {
+    ui.pickerBody.replaceChildren(el('p', { class: 'picker__empty', text: error.message }));
+    ui.pickerNote.textContent = '';
+    ui.pickerOpen.disabled = true;
+    ui.pickerUp.disabled = true;
+  }
+}
+
+async function openPicker() {
+  ui.pickerDialog.showModal();
+  // Start at the server's browse root (the project's parent by default), so
+  // sibling projects are visible immediately instead of one Up click away.
+  await browseTo(null);
+}
+
+/**
+ * Switches the server's project root, then rebuilds the whole studio against
+ * the new project: a page id, a selection, or a pending edit from the old
+ * project would otherwise be applied to the new one.
+ */
+async function switchProject(dir) {
+  closePicker();
+  setBusy(true, 'Opening project…');
+  try {
+    const project = await api('open', { body: { dir } });
+    state.project = project;
+    state.profile = null;
+    state.page = null;
+    state.selected = null;
+    state.pending = [];
+    state.nodeIndex = new Map();
+    state.treeIndex = new Map();
+    renderPending();
+    localStorage.removeItem('hf-studio:selection');
+    ui.root.textContent = project.root;
+    ui.pageSelect.replaceChildren(
+      ...project.pages.map((page) => el('option', { value: page.file, text: page.title || page.file })),
+    );
+    if (!project.pages.length) {
+      setStatus('No HTML pages found in this project', 'error');
+      return;
+    }
+    ui.pageSelect.value = project.pages[0].file;
+    await loadPage(project.pages[0].file, { keepSelection: false });
+    const history = await api('history');
+    ui.undo.disabled = history.snapshots.length === 0;
+    if (state.tab === 'project') renderProjectPanel();
+    setStatus(`Opened ${project.root}`, 'ok');
+    api('profile')
+      .then((profile) => {
+        state.profile = profile;
+        if (state.tab === 'project') renderProjectPanel();
+      })
+      .catch(() => {
+        state.profile = null;
+      });
+  } catch (error) {
+    reportError(error);
+  } finally {
+    setBusy(false);
+  }
+}
+
+ui.openProject.addEventListener('click', openPicker);
+ui.pickerUp.addEventListener('click', async () => {
+  // `parent` is null at the browse root; the button is disabled there.
+  try {
+    const listing = await api('browse', { query: picker.dir ? { dir: picker.dir } : {} });
+    if (listing.parent) await browseTo(listing.parent);
+  } catch (error) {
+    reportError(error);
+  }
+});
+ui.pickerOpen.addEventListener('click', () => {
+  if (!picker.dir || !picker.openable) return;
+  // Pending edits only exist in memory: switching projects drops them, so ask.
+  if (state.pending.length && !confirm(`Discard ${state.pending.length} unsaved change(s) and open another project?`)) {
+    return;
+  }
+  switchProject(picker.dir);
 });
 
 /* ------------------------------------------------------------ boot */
