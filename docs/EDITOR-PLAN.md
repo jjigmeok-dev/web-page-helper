@@ -1,8 +1,8 @@
 # 에디터 기능 — 요구사항과 구현 계획
 
-> 상태: **Phase 1–6 구현 완료**. `npm run studio`로 실행한다. 사용법은 `README.md`,
-> 검증은 `npm test` (80개). 이 문서는 요구사항과 설계의 기준이며, 구현과 다른 부분은
-> 아래 "구현 노트"에 적는다.
+> 상태: **Phase 1–6 구현 완료**, 이후 **호스팅(로컬/IP)과 폴더 선택** 추가. `npm run studio`로 실행한다.
+> 사용법은 `README.md`, 검증은 `npm test` (142개). 이 문서는 요구사항과 설계의 기준이며,
+> 구현과 다른 부분은 아래 "구현 노트"에 적는다.
 
 ## 1. 목표
 
@@ -14,12 +14,13 @@
 
 - 임의의 외부 프레임워크 프로젝트(React/Vue SFC, 번들러 설정) 지원
 - 실시간 협업, 원격 배포, 데이터베이스
+- 사용자 계정/권한 관리 (네트워크 노출은 토큰 하나로만 보호한다)
 - 픽셀 단위 드래그 리사이즈 캔버스
 - 이미지 편집, CMS 콘텐츠 관리
 
 ## 2. 사용자 시나리오
 
-1. `hf serve` 실행 → `/__studio` 접속 → 프로젝트 페이지 목록 확인
+1. `hf studio` 실행 → `/__studio` 접속 → 프로젝트 페이지 목록 확인. 다른 프로젝트를 열려면 상단 `Open…`으로 폴더를 고른다
 2. 페이지를 열면 iframe 미리보기 + 좌측 구조 트리 + 우측 설정 패널
 3. 미리보기에서 요소를 클릭(또는 트리에서 선택) → 어떤 파일·노드인지 표시
 4. 우측 패널에서:
@@ -52,7 +53,7 @@
 | --- | --- |
 | N1 | 빌드 없음: 스튜디오도 정적 ESM + `node:` 내장 모듈만 사용 |
 | N2 | 포맷 보존: 변경 범위 외 바이트는 절대 변하지 않는다 (재포맷·재직렬화 금지) |
-| N3 | 안전: 127.0.0.1 바인딩, 프로젝트 루트 밖 경로·심볼릭 링크 거부, `node_modules`/`.git`/`.hf` 쓰기 금지 |
+| N3 | 안전: 기본 127.0.0.1 바인딩. 네트워크 바인딩은 토큰 필수(모든 요청 게이트). 프로젝트 루트 밖 경로·심볼릭 링크 거부, 폴더 탐색은 `browseRoot` 밖 거부, `node_modules`/`.git`/`.hf` 쓰기 금지 |
 | N4 | 실패 폐쇄: 스캔 문제가 있는 파일, 2MB 초과, UTF-8 아님 → 편집 거부하고 이유 표시 |
 | N5 | 헤드리스 계약 유지: 스튜디오는 기초 컴포넌트에 CSS/클래스를 주입하지 않는다 (`hf validate` 통과 유지) |
 | N6 | 접근성: 패널은 실제 폼 컨트롤, 트리는 `role="tree"`, 포커스 트랩 없음 |
@@ -68,8 +69,8 @@ flowchart LR
     UI <-->|postMessage| IF
   end
 
-  subgraph server["node:http (127.0.0.1)"]
-    API["studio API<br/>project · page · apply · undo"]
+  subgraph server["node:http (127.0.0.1 | --host + token)"]
+    API["studio API<br/>project · page · apply · undo<br/>browse · open"]
     MODEL["프로젝트 모델<br/>discover + model"]
     EDIT["편집 엔진<br/>range ops + 재검증"]
     SCAN["스캐너<br/>html · css"]
@@ -106,7 +107,7 @@ DOM을 다시 직렬화하면 포맷이 깨진다. 대신 스캐너가 모든 �
 
 ## 5. 데이터 계약
 
-### `GET /__studio/api/project`
+### `GET /__api/project`
 
 ```jsonc
 {
@@ -118,7 +119,7 @@ DOM을 다시 직렬화하면 포맷이 깨진다. 대신 스캐너가 모든 �
 }
 ```
 
-### `GET /__studio/api/page?file=index.html`
+### `GET /__api/page?file=index.html`
 
 ```jsonc
 {
@@ -135,7 +136,7 @@ DOM을 다시 직렬화하면 포맷이 깨진다. 대신 스캐너가 모든 �
 }
 ```
 
-### `POST /__studio/api/apply`
+### `POST /__api/apply`
 
 ```jsonc
 { "ops": [ /* 위 op들 */ ], "dryRun": false }
@@ -144,7 +145,35 @@ DOM을 다시 직렬화하면 포맷이 깨진다. 대신 스캐너가 모든 �
 응답: `{ "ok": true, "files": [{ "file": "…", "version": "sha256:…", "diff": "…" }], "undo": "u-17" }`
 실패: `409 { "ok": false, "code": "STALE_VERSION" | "PRECONDITION" | "SCAN_PROBLEMS" | "OUT_OF_ROOT", "op": 2, "message": "…" }`
 
-### `POST /__studio/api/undo` → `{ "restored": ["index.html"] }`
+### `POST /__api/undo` → `{ "restored": ["index.html"] }`
+
+### `GET /__api/browse?dir=/abs/path`
+
+```jsonc
+{
+  "ok": true,
+  "path": "/abs/parent/beta",       // 실제로 나열한 디렉터리
+  "base": "/abs/parent",            // browseRoot. 이 밖으로는 못 간다
+  "parent": "/abs/parent",          // base에서는 null
+  "openable": true,                 // .html이 하나 이상 있는가
+  "pages": ["home.html"],
+  "dirs": [{ "name": "gamma", "path": "/abs/parent/beta/gamma" }]
+}
+```
+
+`dir`을 생략하면 `base`를 나열한다. 절대 경로와 상대 경로를 모두 받고, `..`로 `base`를 벗어나면
+`OUT_OF_ROOT`. 숨김 디렉터리는 나열하지 않는다.
+
+### `POST /__api/open` — `{ "dir": "/abs/parent/beta" }`
+
+서버의 root를 바꾸고 새 인벤토리를 돌려준다. `discover()` 결과와 같은 모양이다.
+
+```jsonc
+{ "ok": true, "root": "/abs/parent/beta", "pages": [...], "styles": [...], "components": [...], "foundations": [...] }
+```
+
+실패: `OUT_OF_ROOT`(탐색 범위 밖), `NOT_A_DIR`(파일이거나 없음), `NO_PAGES`(HTML 없음).
+**실패하면 root는 바뀌지 않는다.**
 
 ## 6. 파일 레이아웃 (신규)
 
@@ -154,7 +183,7 @@ tools/studio/
   model.mjs         PageModel 조립 (html tree + css rules + component 매핑)
   edit.mjs          op 적용 엔진 (범위 치환 + 재검증 + 원자적 쓰기)
   journal.mjs       .hf/backups 스냅샷 + undo
-  server.mjs        JSON API + 정적 서빙 (hf serve 위임)
+  server.mjs        JSON API + 정적 서빙, host 바인딩 · 토큰 게이트 · 런타임 root
   api.mjs           순수 핸들러 (테스트용, http 무관)
 studio/
   index.html        스튜디오 셸
@@ -167,6 +196,7 @@ tests/
   edit.test.mjs     op 엔진 (사전조건, 롤백, 포맷 보존)
   studio.test.mjs   API 통합 (임시 프로젝트 디렉터리)
   studio.e2e.test.mjs  Playwright: 선택 → 편집 → 디스크 파일 검증
+  hosting.test.mjs  호스트/토큰, browse 탈출 차단, 프로젝트 전환
 ```
 
 ## 7. 단계별 계획
@@ -212,6 +242,15 @@ tests/
 - `hf validate`에 "스튜디오가 기초 컴포넌트 계약을 깨지 않았는지" 검사 추가
 - README에 사용법
 
+### Phase 7 — 호스팅과 폴더 선택
+
+- `--host <addr>`: 루프백이 아닌 바인딩은 **토큰 필수**. `--token`으로 고정, 생략 시 생성 후 URL에 붙여 출력. `?token=`과 `x-hf-token` 둘 다 지원하고 API·`/__studio`·프로젝트 파일을 모두 게이트한다
+- `hf serve`도 같은 host/token 처리를 쓴다 (두 서버의 규칙이 갈라지지 않게)
+- root를 클로저로 캡처하지 않고 **요청마다 읽는다** → 프로젝트 전환에 재시작이 필요 없다
+- `--browse-root`(기본: 프로젝트의 부모) + `browse`/`open` API + `Open…` 피커
+- 전환 시 페이지·선택·pending·프로필을 전부 새 프로젝트 기준으로 재구성하고, 저장 안 된 변경이 있으면 확인을 받는다
+- 검증: `tests/hosting.test.mjs` (HTTP 없이 핸들러 직접 호출), Chromium e2e로 실제 전환 확인
+
 ## 8. 리스크와 완화
 
 | 리스크 | 영향 | 완화 |
@@ -222,13 +261,22 @@ tests/
 | 컴포넌트 스니펫이 계약 위반 | 헤드리스 원칙 붕괴 | 스니펫은 레지스트리에서만, 삽입 후 `hf validate` 규칙 재검사 |
 | iframe과 페이지 JS 충돌 | 미리보기 오작동 | 브리지는 iframe에만 주입, 유저 코드 수정 없음, `__studio` 쿼리로만 활성 |
 | 다중 파일 페이지(include) | 부분만 수정 | v1은 단일 HTML + `<link>` CSS로 한정, 문제 시 명시적 거부 |
+| 네트워크 노출 | 같은 LAN의 누구나 프로젝트를 읽고 **쓴다** | 루프백이 아닌 바인딩은 토큰 없이 시작 불가. 모든 경로 401, 토큰은 타이밍 안전 비교 |
+| 폴더 탐색이 파일시스템 전체를 노출 | 머신 구조 유출, `open`이 임의 경로 통로가 됨 | `browseRoot` 밖은 `OUT_OF_ROOT`. `--browse-root`가 프로젝트를 포함하지 않으면 시작 거부 |
+| 프로젝트 전환 중 pending 편집 소실 | 사용자가 작업을 잃음 | 전환 전 확인 대화상자, 취소하면 아무것도 바꾸지 않는다 |
+| 토큰이 URL·로그에 남음 | 유출 시 재사용 | 로컬 전용 기본값, `x-hf-token` 헤더 지원. 토큰은 실행마다 새로 생성 |
 
-## 9. 결정 필요 사항
+## 9. 결정 완료 사항
 
-1. **스타일 쓰기 대상**: 매칭되는 원본 규칙을 직접 수정(권장) vs 페이지별 `studio.css` 오버라이드 파일 생성.
-2. **범위**: 현재 프로젝트만(권장, 스키마 단순) vs 임의 프로젝트 디렉터리 지정.
-3. **Undo 방식**: `.hf/backups` 저널(권장, git 불필요) vs git 기반.
-4. **프레임 프리셋**: 헤더/사이드바/메인/푸터 고정 프리셋(권장) vs 자유 삽입만.
+계획 단계에서 열려 있던 항목은 모두 결정됐고 구현에 반영됐다.
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| 스타일 쓰기 대상 | 매칭되는 원본 규칙을 직접 수정 | 오버라이드 파일을 두면 같은 선언이 두 곳에 생겨 어느 쪽이 이기는지 사용자가 추적해야 한다. 미리보기는 CSSOM으로 즉시 반영하고, 저장은 원본 규칙에만 한다 |
+| 편집 범위 | 현재 프로젝트만 | 프로젝트를 넘나드는 편집은 스키마·저널·경로 검증을 모두 복잡하게 만든다. 대신 **프로젝트 전환**(`Open…`)을 추가해 다른 폴더를 여는 비용을 없앴다 |
+| Undo 방식 | `.hf/backups` 저널 | git이 없는 프로젝트에서도 동작해야 한다 |
+| 프레임 프리셋 | 고정 프리셋 + 자유 삽입 | 프리셋은 시작점이고, 삽입 팔레트로 임의 구조를 넣을 수 있다 |
+| 네트워크 노출 | 기본 루프백, `--host` + 토큰 | 사용자 계정이 없고 스튜디오는 **파일을 쓴다**. 실수로 `0.0.0.0`에 열었을 때 프로젝트가 공개되면 안 된다 |
 
 ## 10. 완료 정의
 
@@ -236,6 +284,8 @@ tests/
 - 잘못된 편집은 409/사전조건 실패로 **아무 파일도 쓰지 않는다**.
 - Undo가 이전 스냅샷을 복원한다.
 - `npm test`의 스캐너/편집/API/e2e 테스트와 기존 19개 기초 테스트가 모두 통과한다.
+- `--host 0.0.0.0`으로 띄우면 LAN 주소가 출력되고, 토큰 없는 요청은 API·정적 파일·스튜디오 셸 모두 401이다.
+- `Open…`으로 다른 폴더를 열면 재시작 없이 그 프로젝트의 페이지가 서빙되고, `--browse-root` 밖 경로는 거부된다.
 
 ## 11. 구현 노트 (계획 대비 차이)
 
@@ -249,3 +299,8 @@ tests/
 | Playwright e2e | 별도 테스트 파일 | `tests/studio.e2e.test.mjs` (`playwright-core`, Chromium 없으면 skip) | 선택→편집→diff→디스크와 stale 거부를 실제 브라우저로 검증. HTTP 왕복 테스트는 `tests/studio.test.mjs`에 별도 유지 |
 | 스니펫 | `parts` 메타에서 생성 | 파운데이션별 실제 스니펫 + 폴백 | `tabs`처럼 파트 중첩 구조가 메타로 표현되지 않는 경우가 있다 |
 | `hf validate` 확장 | 스튜디오 계약 검사 추가 | 기존 규칙 그대로 | 스튜디오는 기초 컴포넌트 파일을 쓰지 않으므로 검사 대상이 아니다 |
+| 프로젝트 root | 시작 시 고정 | 요청마다 읽는 getter (`createApi(() => state.root)`) | 전환에 재시작이 필요 없다. root를 클로저로 잡으면 9개 핸들러가 전부 낡은 경로를 본다 |
+| 네트워크 접근 | 계획 없음 | `--host` + 토큰 강제 | 스튜디오는 파일을 쓴다. 계정이 없으므로 토큰이 유일한 경계이고, 실수로 연 `0.0.0.0`이 프로젝트를 공개하면 안 된다 |
+| 폴더 선택 범위 | 계획 없음 | `--browse-root`, 기본은 프로젝트의 부모 | 형제 프로젝트는 한 번에 보이면서 파일시스템 전체는 노출하지 않는다 |
+| 열 수 있는 폴더 | 계획 없음 | `.html`이 하나 이상 있어야 함 | 빈 폴더를 열면 편집기가 아무것도 못 하는 상태로 남는다. `NO_PAGES`로 먼저 거부한다 |
+| 토큰 전달 | 계획 없음 | `?token=` + `x-hf-token` | 쿼리는 브라우저에서 바로 열 수 있고, 헤더는 로그·Referer에 남기지 않을 때 쓴다 |
