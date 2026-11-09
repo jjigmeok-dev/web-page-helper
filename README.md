@@ -244,3 +244,16 @@ npm test     # 131개: 스캐너, 편집 엔진, 저널, API, 서버, 프로필/
 `tests/owner.test.mjs`는 마크업/동작/스타일이 서로 다른 파일에 있는 프로젝트에서 소유권 판정을 검증한다.
 `tests/bootstrap.test.mjs`는 빈 파일·프래그먼트·`<body />`에 프레임을 적용하고, 스타일시트가 없을 때 생성되는지 검증한다.
 `tests/suggest.test.mjs`는 제안 엔진이 지원하는 op만 내보내는지, 계약/접근성/구조 규칙이 오탐 없이 동작하는지, 제안을 적용하면 결함이 실제로 사라지는지 검증한다.
+
+## 라이선스
+
+**AGPL-3.0-only**. 전문은 [LICENSE](LICENSE)에 있다.
+
+네트워크로 이 소프트웨어를 제공하면(수정 여부와 무관하게) 사용자에게 소스 전체를 공개해야 한다 — AGPL 제13조. 스튜디오를 사내 서버나 SaaS로 띄우는 경우도 포함된다.
+
+npm에는 배포하지 않는다. `package.json`이 `private: true`이고, `prepublishOnly`가 배포를 명시적으로 거부한다(npm 11 미만은 `private`를 무시하므로 이중으로 막는다). 설치는 저장소를 클론해서 한다:
+
+```bash
+git clone https://github.com/jjigmeok-dev/web-page-helper
+cd web-page-helper && npm ci
+```

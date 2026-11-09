@@ -2,13 +2,15 @@
   "name": "web-page-helper",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "description": "No-build headless component toolkit for HTML/CSS/JS",
   "scripts": {
     "dev": "node tools/cli.mjs serve",
     "studio": "node tools/cli.mjs studio",
     "test": "NODE_OPTIONS=--max-old-space-size=1024 timeout 180 node --test tests/*.test.mjs",
-    "hf": "node tools/cli.mjs"
+    "hf": "node tools/cli.mjs",
+    "prepublishOnly": "node -e \"console.error('web-page-helper is not published to npm. Install from https://github.com/jjigmeok-dev/web-page-helper'); process.exit(1)\""
   },
   "devDependencies": {
     "linkedom": "^0.18.15",
