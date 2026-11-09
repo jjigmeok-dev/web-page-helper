@@ -12,7 +12,7 @@ CLI는 `npm run hf -- <명령>` 또는 `node tools/cli.mjs <명령>`으로 실�
 
 | 명령 | 용도 |
 | --- | --- |
-| `hf list` | 파운데이션·유저 컴포넌트·페이지 목록 (`index.html`, `pages/*.html`) |
+| `hf list` | 파운데이션·유저 컴포넌트·페이지 목록. 페이지는 `pages/`만이 아니라 루트 아래 모든 `.html`을 찾는다(실제 프로젝트는 `app/dashboard.html`처럼 중첩된다) |
 | `hf new foundation <name>` | 헤드리스 파운데이션 스캐폴드 + `foundation/index.js` 등록 |
 | `hf new component <name>` | 유저 컴포넌트 `components/<name>/{<name>.js,<name>.css}` 스캐폴드 |
 | `hf new page <name>` | `pages/<name>.html` 스캐폴드 |
@@ -23,7 +23,7 @@ CLI는 `npm run hf -- <명령>` 또는 `node tools/cli.mjs <명령>`으로 실�
 | `hf projects show <name>` | 프로필 전체 출력 (페이지·스타일시트·경고) |
 | `hf projects up <name>` | 프로필 출력 후 해당 프로젝트로 에디터 실행 |
 | `hf projects remove <name>` | 등록 해제 |
-| `hf validate` | 파운데이션 계약(클래스/인라인 스타일/CSS 금지) 검사 |
+| `hf validate` | 파운데이션 계약(클래스/인라인 스타일/CSS 금지) 검사. 파일 단위로 세므로 12개로 보고된다 |
 
 `--root`를 생략하면 **현재 디렉터리**를 대상으로 삼는다. 다른 프로젝트에서 `hf studio`를 실행하면
 그 프로젝트의 `index.html`/`pages/`를 연다. 툴킷 자체를 편집하려면 툴킷 루트에서 실행한다.
@@ -79,8 +79,9 @@ hf studio --root ~/work/my-site --proxy http://127.0.0.1:8000
 
 | 경로 | 역할 |
 | --- | --- |
-| `foundation/` | 헤드리스 파운데이션 12종. 클래스/인라인 스타일/CSS를 절대 넣지 않는다 |
+| `foundation/` | 헤드리스 파운데이션 13종 / 12개 파일(`switch`는 `toggle.js`에서 함께 내보낸다). 클래스/인라인 스타일/CSS를 절대 넣지 않는다 |
 | `compose/` | `defineComponent` — 파운데이션을 조립해 유저 컴포넌트를 정의 |
+| `runtime/` | `[data-hf]` 자동 마운트, `use()`, `hf-*` 엘리먼트 관찰 |
 | `components/` | 유저 컴포넌트 (`*.js` + `*.css`) |
 | `studio/` | 에디터 UI (정적 ESM, 빌드 없음) |
 | `tools/scan/` | HTML·CSS 스캐너 (모든 노드/선언의 바이트 범위) |
@@ -107,6 +108,24 @@ export default {
 </div>
 ```
 
+#### `meta.parts` vs `meta.required`
+
+`parts`는 **전체 슬롯 목록**이고, 그중 무엇이 없으면 `mount()`가 던지는지는 `required`에 따로 적는다. 둘을 구분하지 않으면 선택 슬롯(메뉴의 `separator`, 스위치의 `thumb`)까지 누락으로 오판한다.
+
+```js
+export const meta = {
+  name: 'menu',
+  parts:    { trigger: 'button', list: 'any', item: 'button', separator: 'any' },
+  required: ['trigger', 'list'],   // 없으면 mount()가 throw
+  options:  { placement: 'bottom-start', loop: true, typeahead: true },
+  events:   ['hf:open', 'hf:close', 'hf:select'],
+};
+```
+
+`parts` 값은 `any`(태그 무관) 또는 `a|b` 유니온이다. 루트 엘리먼트가 슬롯을 대신하는 파운데이션(`toggle`, `switch`, `listbox`)은 `required: []`다. 스튜디오의 **Suggestions**가 이 두 필드로 계약 위반을 판정하므로, 파운데이션을 추가할 때 `required`를 빠뜨리면 진단도 동작하지 않는다.
+
+`hf new foundation` 스캐폴드는 `parts`/`required`를 함께 생성한다.
+
 ## 스튜디오
 
 `npm run studio` → 브라우저에서 `/__studio`. 서버는 `127.0.0.1`에만 바인딩된다.
@@ -126,7 +145,8 @@ export default {
   - **접근성(Error)**: `img`의 `alt`, `a`의 `href`, 접근 가능한 이름이 없는 `button`/`input`/`select`/`textarea`, 제목 단계 건너뜀.
   - **구조(Error/Warning)**: 중복 `id`, 빈 컨테이너, foundation 밖의 고아 part.
   - **스타일(Warning)**: 클래스/id/커스텀 태그라는 훅을 붙였는데 그 훅을 쓰는 규칙이 없음. 규칙이 아예 없는 `<p>`처럼 상속이 정상인 경우는 경고하지 않는다.
-  - **모양·크기·색상(Suggestion)**: 자식 배치(`display:flex` + `gap`), 줄바꿈 허용, 패딩, 모서리, 텍스트/배경색. 페이지가 정의한 토큰(`--hf-gap`, `--hf-radius`, `--hf-fg`, `--hf-surface`)이 있으면 `var(...)`로 참조하고, 이미 선언된 속성은 다시 제안하지 않는다.
+  - **모양·크기·색상(Suggestion)**: 자식 배치(`display:flex` + `gap`), 줄바꿈 허용, 패딩, 모서리, 텍스트/배경색. 이미 선언된 속성은 다시 제안하지 않는다.
+    토큰은 **페이지가 실제로 정의했을 때만** `var(...)`로 참조하고, 없으면 리터럴 폴백을 쓴다. `--hf-radius`·`--hf-fg`·`--hf-surface`는 `styles/base.css`에 있지만, `--hf-gap`·`--hf-space`는 기본 제공되지 않으므로 직접 정의해야 `var()`가 나온다.
   - **로직(Suggestion)**: 아직 쓰지 않은 foundation 옵션/컴포넌트 prop(적용 시 기존 옵션을 보존), 비어 있는 part, 동작 계층이 없는 상호작용 태그.
 - **Layout**: `display`, `flex-direction`, `gap`, `padding`, `align-items`, `justify-content`, `grid-template-columns`를 **원본 CSS 규칙에 직접** 기록한다. 규칙이 없으면 새로 만든다.
 - **Component**: `data-hf` 파운데이션은 `data-hf-options`를, `hf-*` 유저 컴포넌트는 props 속성을 폼으로 편집한다.
@@ -164,6 +184,7 @@ export default {
 | 엔드포인트 | 용도 |
 | --- | --- |
 | `GET /__api/project` | 페이지·스타일·컴포넌트·파운데이션 목록 |
+| `GET /__api/profile` | 프론트엔드 프로필: 페이지 수·자산·토큰·편집 차단 사유 |
 | `GET /__api/page?file=index.html` | 노드 트리, 시트 버전, 매칭 규칙, 토큰 |
 | `GET /__api/source?file=…` | 파일 원문 + 버전 |
 | `POST /__api/plan` | 드라이런: diff만 계산 |
@@ -172,6 +193,26 @@ export default {
 | `GET /__api/history` | 최근 스냅샷 |
 
 ### op
+
+15종이다. 모든 op은 `file`을 받고, HTML op은 `node`(노드 id), CSS op은 `selector`를 쓴다.
+
+| op | 대상 | 하는 일 |
+| --- | --- | --- |
+| `setDecl` | CSS | 규칙에 선언 추가/교체. `expect`로 이전 값을 검증 |
+| `setDecls` | CSS | 여러 선언을 한 번에 (`decls` 객체) |
+| `removeDecl` | CSS | 선언 삭제 |
+| `appendCss` | CSS | 파일 끝에 CSS 텍스트 추가 |
+| `setAttr` | HTML | 속성 설정 (값은 저장 시 이스케이프) |
+| `removeAttr` | HTML | 속성 삭제 |
+| `setText` | HTML | 리프 노드의 텍스트 교체. 자식이 있으면 `NOT_A_LEAF` |
+| `appendToHead` | HTML | `<head>`에 마크업 삽입 (스타일시트 링크 등) |
+| `insertNode` | HTML | `before`/`after`/`prepend`/`append`로 삽입 |
+| `removeNode` | HTML | 노드 삭제 |
+| `duplicateNode` | HTML | 복제. 복제본의 `id`와 그를 가리키던 `aria-*` 참조를 제거 |
+| `moveNode` | HTML | 다른 위치로 이동 |
+| `wrapNode` | HTML | 새 래퍼로 감싸기 |
+| `frameNode` | HTML | 페이지 레이아웃 프레임 적용 (`data-hf-frame-slot`으로 기존 콘텐츠 이동) |
+| `frameDocument` | HTML | DOM이 없는 페이지에 문서 뼈대를 만들며 프레임 적용 |
 
 ```js
 { op: 'setDecl',    file: 'styles/demo.css', selector: '.grid', property: 'gap', value: '2rem', expect: '1.25rem' }
@@ -182,9 +223,12 @@ export default {
 { op: 'moveNode',   file: 'index.html', node: '0.0.1.0', target: '0.0.1.2', position: 'append' }
 { op: 'wrapNode',   file: 'index.html', node: '0.0.1.0', html: '<section class="wrap">' }
 { op: 'frameNode',  file: 'index.html', node: '0.0.1', html: '<div class="layout">…<main data-hf-frame-slot></main>…</div>' }
+{ op: 'frameDocument', file: 'index.html', html: '<div class="layout">…</div>', stylesheet: '/style.css' }
 ```
 
-노드 id는 구조적 인덱스 경로(`0.0.1.0.2`)다. 배치 안의 모든 op은 **같은 스냅샷**에 대해 계산되므로, 앞선 op이 뒤 노드의 id를 밀지 않는다.
+노드 id는 구조적 인덱스 경로(`0.0.1.0.2`)다. **HTML op**은 배치 안에서 같은 스냅샷에 대해 계산되므로, 앞선 op이 뒤 노드의 id를 밀지 않는다.
+
+**CSS op**은 반대로 **순차 적용**된다. CSS는 selector로 규칙을 찾지 위치 id를 쓰지 않으므로, 새 규칙에 `display`와 `gap`을 연달아 넣을 때 두 번째 op이 첫 번째가 만든 블록을 이어서 확장한다. (스냅샷 기준으로 계산하면 마지막 선언만 남는다.)
 
 ## 테스트
 
@@ -192,6 +236,8 @@ export default {
 npm test     # 131개: 스캐너, 편집 엔진, 저널, API, 서버, 프로필/레지스트리, 소유권 판정, 빈 DOM 부트스트랩, 제안 엔진, op 빌더, 브라우저 e2e
 ```
 
+`tests/edit.test.mjs`는 HTML/CSS 스캐너와 편집 엔진을 덮는다: 바이트 범위 정확성, 범위 밖 바이트 보존, 버전 불일치 거부, op별 가드(`VOID_NODE`, `NOT_A_LEAF`, `NO_RULE`, `BAD_SELECTOR`), CSS 배치 순차 적용, 재스캔 후 롤백.
+`tests/foundation.test.mjs`는 Chromium에서 13개 파운데이션(`switch` 포함)의 키보드·포커스·ARIA 동작을 실제 이벤트로 확인한다.
 `tests/studio.test.mjs`는 실제 프로젝트를 임시 디렉터리에 복사해 HTTP 왕복까지 검증한다.
 `tests/studio.e2e.test.mjs`는 Chromium을 띄워 미리보기 선택 → 폼 편집 → diff 확인 → 디스크 검증과 stale 거부를 실제 UI로 확인한다. Chromium이 없으면 skip한다.
 `tests/project.test.mjs`는 프로필 수집, 레지스트리(`HF_HOME`으로 격리), `GET /api/profile`, 입력 검증을 덮는다.
