@@ -37,6 +37,17 @@
       inset: 0 auto auto 0;
     }
     .__hf-selected { outline: 2px solid #4f46e5 !important; outline-offset: -2px !important; }
+    /* Drop indicator: where the dragged element will land. */
+    .__hf-drop {
+      position: fixed;
+      pointer-events: none;
+      z-index: 2147483001;
+      background: #4f46e5;
+      border-radius: 1px;
+    }
+    .__hf-drop--line { block-size: 2px; }
+    .__hf-drop--zone { background: rgb(79 70 229 / 0.18); border: 2px solid #4f46e5; border-radius: 3px; }
+    .__hf-drag { opacity: 0.4; }
   `;
   document.head.append(style);
 
@@ -46,7 +57,10 @@
   const hoverBox = document.createElement('div');
   hoverBox.className = '__hf-hover';
   hoverBox.hidden = true;
-  document.documentElement.append(overlay, hoverBox);
+  const dropBox = document.createElement('div');
+  dropBox.className = '__hf-drop';
+  dropBox.hidden = true;
+  document.documentElement.append(overlay, hoverBox, dropBox);
 
   // Unsaved declaration edits are applied straight to the page's CSSOM, not
   // as an appended override: removing a declaration has to actually remove it,
@@ -57,6 +71,11 @@
 
   let selectedId = null;
   let selectedEl = null;
+  // Drag-to-move: press on a node, move past a threshold, release over a
+  // target. Only the *intent* is computed here; the studio turns it into an
+  // op through the normal pending/save path, so a drag is never a write.
+  const DRAG_THRESHOLD = 6;
+  let drag = null; // { id, el, startX, startY, active, target, position }
   // Picking is the point of the studio, so it is on until the user turns it
   // off to interact with the page itself.
   let picking = true;
@@ -220,6 +239,8 @@
 
   function onClick(event) {
     if (!picking) return;
+    // A drag ends with pointerup then click; the click must not re-select.
+    if (drag?.active) return;
     const el = nodeOf(event.target);
     if (!el) return;
     event.preventDefault();
@@ -242,8 +263,107 @@
     hoverBox.style.height = `${rect.height}px`;
   }
 
+  /**
+   * Where would `node` land if dropped over `target`?
+   *
+   * Inside the target when the pointer is well within it (the middle
+   * three-fifths), otherwise before or after it on the dominant axis. This is
+   * the usual block-editor rule, and it makes "move this below that" possible
+   * without a second gesture.
+   */
+  function dropPosition(node, target, x, y) {
+    if (node === target || target.contains(node)) return null;
+    const rect = rectOf(target);
+    const px = (x - rect.x) / Math.max(rect.width, 1);
+    const py = (y - rect.y) / Math.max(rect.height, 1);
+    const inside = px > 0.2 && px < 0.8 && py > 0.2 && py < 0.8;
+    if (inside) return { position: 'append', rect };
+    if (rect.width >= rect.height) return { position: px < 0.5 ? 'before' : 'after', rect };
+    return { position: py < 0.5 ? 'before' : 'after', rect };
+  }
+
+  /** Paints the drop indicator for a resolved position. */
+  function paintDrop(entry) {
+    if (!entry) {
+      dropBox.hidden = true;
+      return;
+    }
+    const { rect, position } = entry;
+    dropBox.hidden = false;
+    dropBox.className = `__hf-drop ${position === 'append' ? '__hf-drop--zone' : '__hf-drop--line'}`;
+    dropBox.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
+    if (position === 'append') {
+      dropBox.style.width = `${rect.width}px`;
+      dropBox.style.height = `${rect.height}px`;
+    } else if (position === 'before') {
+      dropBox.style.width = `${rect.width}px`;
+      dropBox.style.height = '2px';
+    } else if (position === 'after') {
+      dropBox.style.width = `${rect.width}px`;
+      dropBox.style.height = '2px';
+      dropBox.style.transform = `translate(${rect.x}px, ${rect.y + rect.height - 2}px)`;
+    }
+  }
+
+  function onPointerDown(event) {
+    if (!picking || event.button !== 0) return;
+    const el = nodeOf(event.target);
+    if (!el) return;
+    drag = { id: el.dataset.hfNode, el, startX: event.clientX, startY: event.clientY, active: false, target: null, position: null };
+  }
+
+  function onPointerMove(event) {
+    if (!drag) return;
+    if (!drag.active) {
+      const moved = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+      if (moved < DRAG_THRESHOLD) return;
+      drag.active = true;
+      drag.el.classList.add('__hf-drag');
+      hoverBox.hidden = true;
+    }
+    // The pointer is over the drop indicator (pointer-events: none), so the
+    // hit test below sees the real element underneath it.
+    const under = document.elementFromPoint(event.clientX, event.clientY);
+    const target = under ? nodeOf(under) : null;
+    const resolved = target ? dropPosition(drag.el, target, event.clientX, event.clientY) : null;
+    drag.target = target && resolved ? target.dataset.hfNode : null;
+    drag.position = resolved?.position ?? null;
+    paintDrop(resolved && target ? { rect: rectOf(target), position: resolved.position } : null);
+  }
+
+  function endDrag(event, cancelled) {
+    if (!drag) return;
+    const finished = drag.active && drag.target && drag.position && !cancelled;
+    drag.el.classList.remove('__hf-drag');
+    dropBox.hidden = true;
+    const move = finished
+      ? { nodeId: drag.id, targetId: drag.target, position: drag.position }
+      : null;
+    drag = null;
+    if (move) post('drag-move', move);
+    else paintOverlay();
+    // A completed drag must not also register as a click-pick.
+    if (finished) event?.preventDefault?.();
+  }
+
+  function onPointerUp(event) {
+    if (!drag) return;
+    endDrag(event, false);
+  }
+
+  function onKeyDown(event) {
+    if (event.key === 'Escape' && drag) {
+      endDrag(event, true);
+      event.stopPropagation();
+    }
+  }
+
   // Capture phase so project handlers cannot swallow the pick.
   document.addEventListener('click', onClick, true);
+  document.addEventListener('pointerdown', onPointerDown, true);
+  document.addEventListener('pointermove', onPointerMove, true);
+  document.addEventListener('pointerup', onPointerUp, true);
+  document.addEventListener('keydown', onKeyDown, true);
   document.addEventListener('pointerover', onHover, true);
   document.addEventListener('pointerleave', () => {
     hoverBox.hidden = true;

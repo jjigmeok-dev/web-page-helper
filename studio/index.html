@@ -56,21 +56,23 @@
 
         <aside class="pane pane--panel" aria-label="Settings">
           <div class="tabs" role="tablist" aria-label="Settings sections">
-            <button role="tab" id="tab-node" aria-controls="panel-node" aria-selected="true">Element<span class="help" role="img" aria-label="선택한 요소의 태그·속성·텍스트를 직접 편집합니다. HTML에 실제로 적힌 값을 바꿉니다." title="선택한 요소의 태그·속성·텍스트를 직접 편집합니다. HTML에 실제로 적힌 값을 바꿉니다." tabindex="0">?</span></button>
-            <button role="tab" id="tab-layout" aria-controls="panel-layout" aria-selected="false">Layout<span class="help" role="img" aria-label="선택한 요소의 display·flex·grid·간격·여백을 CSS 규칙에 기록합니다." title="선택한 요소의 display·flex·grid·간격·여백을 CSS 규칙에 기록합니다." tabindex="0">?</span></button>
-            <button role="tab" id="tab-component" aria-controls="panel-component" aria-selected="false">Component<span class="help" role="img" aria-label="헤드리스 파운데이션의 옵션이나 유저 컴포넌트의 props를 폼으로 설정합니다." title="헤드리스 파운데이션의 옵션이나 유저 컴포넌트의 props를 폼으로 설정합니다." tabindex="0">?</span></button>
-            <button role="tab" id="tab-structure" aria-controls="panel-structure" aria-selected="false">Structure<span class="help" role="img" aria-label="파운데이션·컴포넌트를 삽입하거나, 요소를 이동·래핑·복제·삭제합니다." title="파운데이션·컴포넌트를 삽입하거나, 요소를 이동·래핑·복제·삭제합니다." tabindex="0">?</span></button>
-            <button role="tab" id="tab-frames" aria-controls="panel-frames" aria-selected="false">Frames<span class="help" role="img" aria-label="페이지 전체를 헤더·사이드바·메인·푸터 골격으로 감쌉니다." title="페이지 전체를 헤더·사이드바·메인·푸터 골격으로 감쌉니다." tabindex="0">?</span></button>
-            <button role="tab" id="tab-project" aria-controls="panel-project" aria-selected="false">Project<span class="help" role="img" aria-label="프로젝트 구성·페이지 목록·디자인 토큰·편집이 막힌 이유를 보여줍니다." title="프로젝트 구성·페이지 목록·디자인 토큰·편집이 막힌 이유를 보여줍니다." tabindex="0">?</span></button>
+            <button role="tab" id="tab-appearance" aria-controls="panel-appearance" aria-selected="true">스타일<span class="help" role="img" aria-label="색·글자 크기·모서리 둥글기를 바꿉니다. 초보자가 가장 먼저 쓰는 설정입니다." title="색·글자 크기·모서리 둥글기를 바꿉니다. 초보자가 가장 먼저 쓰는 설정입니다." tabindex="0">?</span></button>
+            <button role="tab" id="tab-layout" aria-controls="panel-layout" aria-selected="false">배치<span class="help" role="img" aria-label="요소를 가로·세로로 놓고, 간격과 여백을 정합니다. 위치 조정은 여기서 합니다." title="요소를 가로·세로로 놓고, 간격과 여백을 정합니다. 위치 조정은 여기서 합니다." tabindex="0">?</span></button>
+            <button role="tab" id="tab-node" aria-controls="panel-node" aria-selected="false">내용<span class="help" role="img" aria-label="글자 내용과 HTML 속성(id·class·role 등)을 직접 편집합니다." title="글자 내용과 HTML 속성(id·class·role 등)을 직접 편집합니다." tabindex="0">?</span></button>
+            <button role="tab" id="tab-structure" aria-controls="panel-structure" aria-selected="false">구조<span class="help" role="img" aria-label="요소를 넣고·옮기고·복제·삭제하고, 페이지 전체 골격(헤더/사이드바/푸터)을 만듭니다." title="요소를 넣고·옮기고·복제·삭제하고, 페이지 전체 골격(헤더/사이드바/푸터)을 만듭니다." tabindex="0">?</span></button>
+            <button role="tab" id="tab-component" aria-controls="panel-component" aria-selected="false">컴포넌트<span class="help" role="img" aria-label="헤드리스 파운데이션의 옵션이나 유저 컴포넌트의 props를 폼으로 설정합니다." title="헤드리스 파운데이션의 옵션이나 유저 컴포넌트의 props를 폼으로 설정합니다." tabindex="0">?</span></button>
+            <button role="tab" id="tab-project" aria-controls="panel-project" aria-selected="false">프로젝트<span class="help" role="img" aria-label="프로젝트 구성·페이지 목록·디자인 토큰·편집이 막힌 이유를 보여줍니다." title="프로젝트 구성·페이지 목록·디자인 토큰·편집이 막힌 이유를 보여줍니다." tabindex="0">?</span></button>
           </div>
 
-          <div class="panel" id="panel-node" role="tabpanel" aria-labelledby="tab-node">
+          <div class="panel" id="panel-appearance" role="tabpanel" aria-labelledby="tab-appearance">
             <p class="empty">Select an element in the preview or the tree.</p>
           </div>
           <div class="panel" id="panel-layout" role="tabpanel" aria-labelledby="tab-layout" hidden></div>
-          <div class="panel" id="panel-component" role="tabpanel" aria-labelledby="tab-component" hidden></div>
+          <div class="panel" id="panel-node" role="tabpanel" aria-labelledby="tab-node" hidden>
+            <p class="empty">Select an element in the preview or the tree.</p>
+          </div>
           <div class="panel" id="panel-structure" role="tabpanel" aria-labelledby="tab-structure" hidden></div>
-          <div class="panel" id="panel-frames" role="tabpanel" aria-labelledby="tab-frames" hidden></div>
+          <div class="panel" id="panel-component" role="tabpanel" aria-labelledby="tab-component" hidden></div>
           <div class="panel" id="panel-project" role="tabpanel" aria-labelledby="tab-project" hidden></div>
 
           <div class="pending" id="pending" hidden>

@@ -329,7 +329,6 @@ function htmlEdits(source, tree, op, file) {
         html,
       }, file);
       return [{ final: true, text: spliceEdits(withoutNode, inserted) }];
-      return [{ final: true, text: spliceEdits(withoutNode, inserted) }];
     }
 
     case 'frameNode': {

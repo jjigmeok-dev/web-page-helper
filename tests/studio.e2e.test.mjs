@@ -97,11 +97,11 @@ test('e2e: a stale file version is surfaced and nothing is written', async (t) =
     await page.waitForSelector('.tree__row');
 
     // Change the file behind the studio's back, then save an edit.
-    await page.click('#tab-frames');
+    await page.click('#tab-structure');
     // `hasText` also matches the "Header / Sidebar / Main / Footer" card, so
     // pick by exact card title.
     await page
-      .locator('#panel-frames .rule')
+      .locator('#panel-structure .rule')
       .filter({ has: page.locator('.rule__head', { hasText: /^Sidebar \/ Main$/ }) })
       .locator('button')
       .click();
@@ -115,6 +115,63 @@ test('e2e: a stale file version is surfaced and nothing is written', async (t) =
       return status.includes('STALE') || status.includes('changed on disk');
     });
     assert.equal(await page.$('#diff-dialog[open]'), null, 'no diff for a rejected batch');
+  } finally {
+    await studio.close();
+    await browser.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('e2e: dragging in the preview moves the element and only saves on confirm', async (t) => {
+  const browser = await launch();
+  if (!browser) {
+    t.skip('no Chromium available');
+    return;
+  }
+  const root = await project();
+  const studio = await startStudio({ root, port: 0, quiet: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(studio.url);
+    await page.waitForSelector('.tree__row');
+    const frame = page.frameLocator('#preview');
+    await frame.locator('.page__lede').waitFor();
+
+    const before = await readFile(join(root, 'index.html'), 'utf8');
+    const source = await frame.locator('.page__lede').boundingBox();
+    const dest = await frame.locator('.panel').first().boundingBox();
+
+    // Press, cross the drag threshold, then drop onto the target's middle so
+    // the position resolves to `append`.
+    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(source.x + source.width / 2 + 20, source.y + source.height / 2 + 20, { steps: 5 });
+    await page.mouse.move(dest.x + dest.width / 2, dest.y + dest.height / 2, { steps: 10 });
+    await page.mouse.up();
+
+    await page.waitForSelector('#pending-list li');
+    const pending = await page.locator('#pending-list').textContent();
+    assert.match(pending, /move/i, 'the drag queues a move');
+    // Nothing is written until the diff is confirmed.
+    assert.equal(await readFile(join(root, 'index.html'), 'utf8'), before, 'drag does not write on its own');
+
+    await page.click('#save-btn');
+    await page.waitForSelector('#diff-dialog[open]');
+    await page.click('#confirm-save');
+    await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Saved'));
+
+    const after = await readFile(join(root, 'index.html'), 'utf8');
+    assert.notEqual(after, before, 'the confirmed move reached disk');
+    // The lede must now be a child of the panel it was dropped on, not a
+    // sibling of the header it started in. Parse-free check: the header no
+    // longer contains it, and the first panel does.
+    const header = after.slice(after.indexOf('<header>'), after.indexOf('</header>'));
+    assert.ok(!header.includes('page__lede'), 'the lede left the header');
+    const panelStart = after.indexOf('<section class="panel">');
+    const panelEnd = after.indexOf('</section>', panelStart);
+    assert.ok(panelStart !== -1, 'the drop target is still in the file');
+    const panel = after.slice(panelStart, panelEnd);
+    assert.ok(panel.includes('page__lede'), 'the lede moved inside the target');
   } finally {
     await studio.close();
     await browser.close();
@@ -354,7 +411,7 @@ test('e2e: the inspector offers only the tabs that apply to the selection', asyn
       page.$$eval('.tabs [role=tab]', (tabs) =>
         tabs
           .filter((tab) => getComputedStyle(tab).display !== 'none')
-          .map((tab) => tab.textContent.replace('?', '').trim()),
+          .map((tab) => tab.id.replace(/^tab-/, '')),
       );
     const selectInTree = async (label) => {
       const row = page.locator('#tree .tree__row', { hasText: label }).first();
@@ -365,7 +422,7 @@ test('e2e: the inspector offers only the tabs that apply to the selection', asyn
     // A foundation instance: its options are the reason the user clicked it,
     // so the Component tab is both offered and selected.
     await selectInTree('demo-disclosure');
-    assert.ok((await visibleTabs()).includes('Component'), 'Component tab applies to a foundation');
+    assert.ok((await visibleTabs()).includes('component'), 'Component tab applies to a foundation');
     assert.equal(await page.getAttribute('#tab-component', 'aria-selected'), 'true', 'Component is selected for a foundation');
     assert.ok(
       await page.evaluate(() => !document.querySelector('#panel-component').hidden),
@@ -375,14 +432,14 @@ test('e2e: the inspector offers only the tabs that apply to the selection', asyn
     // A plain paragraph has a box but no component settings.
     await selectInTree('.page__lede');
     const pTabs = await visibleTabs();
-    assert.ok(pTabs.includes('Layout'), 'Layout applies to a rendered element');
-    assert.ok(!pTabs.includes('Component'), 'Component is hidden without a component');
+    assert.ok(pTabs.includes('layout'), 'Layout applies to a rendered element');
+    assert.ok(!pTabs.includes('component'), 'Component is hidden without a component');
 
     // <script> has no box: Layout would be meaningless.
     await selectInTree('script');
     const scriptTabs = await visibleTabs();
-    assert.ok(!scriptTabs.includes('Layout'), 'Layout is hidden for a non-rendered tag');
-    assert.ok(scriptTabs.includes('Element'), 'Element always applies');
+    assert.ok(!scriptTabs.includes('layout'), 'Layout is hidden for a non-rendered tag');
+    assert.ok(scriptTabs.includes('node'), 'Element always applies');
 
     // Exactly one panel is ever shown, whatever the selection did.
     const shown = await page.$$eval('.panel', (panels) =>
@@ -422,7 +479,7 @@ test('e2e: every panel title carries a Korean help tooltip', async (t) => {
     }
     // The icon inside a tab must not switch tabs when clicked.
     const before = await page.getAttribute('#tab-layout', 'aria-selected');
-    await page.click('#tab-frames .help');
+    await page.click('#tab-structure .help');
     assert.equal(await page.getAttribute('#tab-layout', 'aria-selected'), before, 'clicking ? does not switch tabs');
   } finally {
     await studio.close();

@@ -94,19 +94,19 @@ const ui = {
   diffNote: $('#diff-note'),
   confirmSave: $('#confirm-save'),
   panels: {
+    appearance: $('#panel-appearance'),
     node: $('#panel-node'),
     layout: $('#panel-layout'),
     component: $('#panel-component'),
     structure: $('#panel-structure'),
-    frames: $('#panel-frames'),
     project: $('#panel-project'),
   },
   tabs: {
+    appearance: $('#tab-appearance'),
     node: $('#tab-node'),
     layout: $('#tab-layout'),
     component: $('#tab-component'),
     structure: $('#tab-structure'),
-    frames: $('#tab-frames'),
     project: $('#tab-project'),
   },
 };
@@ -246,13 +246,14 @@ function select(id, { scroll = false, fromTree = false, target = null } = {}) {
   //     specific one, so clicking a component lands on its options instead of
   //     the generic attribute list.
   const available = syncTabs(node);
-  const specific = ['component', 'layout'].find((key) => tabAvailability(node)[key]) ?? 'node';
+  const specific = ['component', 'appearance'].find((key) => tabAvailability(node)[key]) ?? 'node';
   const wanted = state.tabPinned ? state.tab : specific;
   const active = resolvedTab(wanted, available);
   if (active !== state.tab) {
     showTab(active);
     return;
   }
+  if (state.tab === 'appearance') renderAppearancePanel();
   if (state.tab === 'node') renderNodePanel();
   if (state.tab === 'layout') renderLayoutPanel();
   if (state.tab === 'component') renderComponentPanel();
@@ -766,6 +767,213 @@ const LAYOUT_PROPS = [
   },
 ];
 
+/* ---- appearance panel */
+
+/**
+ * Colour, type and shape.
+ *
+ * These are the three things a beginner reaches for first ("make it blue",
+ * "make it bigger", "round the corners"), and before this panel existed there
+ * was no control for any of them: `color`, `background`, `font-size` and
+ * `border-radius` appeared nowhere in the studio. Everything is a normal
+ * `setDecl` against the same rule the Layout panel writes to, so it goes
+ * through the same pending -> diff -> save path and previews live.
+ */
+const APPEARANCE_PROPS = [
+  {
+    property: 'color',
+    label: 'Text colour',
+    kind: 'color',
+    token: '--hf-fg',
+    help: '글자 색입니다. 상속된 색을 덮어씁니다.',
+  },
+  {
+    property: 'background-color',
+    label: 'Background',
+    kind: 'color',
+    token: '--hf-surface',
+    help: '요소의 배경색입니다. 투명으로 두려면 지우면 됩니다.',
+  },
+  {
+    property: 'font-size',
+    label: 'Font size',
+    kind: 'text',
+    placeholder: '1rem',
+    help: '글자 크기입니다. rem은 브라우저 기본 크기의 배수라 화면 크기에 따라 함께 커집니다.',
+  },
+  {
+    property: 'font-weight',
+    label: 'Font weight',
+    kind: 'select',
+    options: ['', '400', '500', '600', '700'],
+    help: '글자 두께입니다. 400은 보통, 700은 굵게입니다.',
+  },
+  {
+    property: 'line-height',
+    label: 'Line height',
+    kind: 'text',
+    placeholder: '1.6',
+    help: '줄 간격입니다. 단위 없는 값(1.6)은 글자 크기의 배수입니다.',
+  },
+  {
+    property: 'text-align',
+    label: 'Text align',
+    kind: 'select',
+    options: ['', 'left', 'center', 'right', 'justify'],
+    help: '글자 정렬입니다.',
+  },
+  {
+    property: 'border-radius',
+    label: 'Corner radius',
+    kind: 'text',
+    placeholder: '0.5rem',
+    token: '--hf-radius',
+    help: '모서리 둥글기입니다. 0이면 각지고, 값이 클수록 둥글어집니다.',
+  },
+  {
+    property: 'border',
+    label: 'Border',
+    kind: 'text',
+    placeholder: '1px solid currentColor',
+    help: '테두리입니다. 굵기·모양·색을 한 번에 적습니다.',
+  },
+  {
+    property: 'width',
+    label: 'Width',
+    kind: 'text',
+    placeholder: 'auto',
+    help: '요소의 너비입니다. auto는 내용에 맞춥니다.',
+  },
+  {
+    property: 'height',
+    label: 'Height',
+    kind: 'text',
+    placeholder: 'auto',
+    help: '요소의 높이입니다. auto는 내용에 맞춥니다.',
+  },
+  {
+    property: 'opacity',
+    label: 'Opacity',
+    kind: 'text',
+    placeholder: '1',
+    help: '불투명도입니다. 0은 완전 투명, 1은 완전 불투명입니다.',
+  },
+];
+
+/**
+ * A colour input paired with a text field.
+ *
+ * `<input type="color">` only understands `#rrggbb`, but the value on disk is
+ * usually a token (`var(--hf-fg)`), so the swatch cannot be the only control:
+ * the text field keeps the real value and the swatch is a shortcut that
+ * replaces it with a literal hex.
+ */
+function colorInput(value, onCommit) {
+  const text = el('input', { type: 'text', class: 'color__text', value: value ?? '', placeholder: 'var(--hf-fg)' });
+  const swatch = el('input', { type: 'color', class: 'color__swatch', value: toHex(value) ?? '#000000' });
+  text.addEventListener('change', () => onCommit(text.value));
+  swatch.addEventListener('change', () => {
+    text.value = swatch.value;
+    onCommit(swatch.value);
+  });
+  return el('div', { class: 'color' }, swatch, text);
+}
+
+/** `#abc`, `#aabbcc` and `rgb(...)` -> `#aabbcc`; anything else is unknown. */
+function toHex(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed;
+  if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
+    const [, r, g, b] = trimmed;
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  const rgb = trimmed.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (rgb) {
+    const hex = (n) => Number(n).toString(16).padStart(2, '0');
+    return `#${hex(rgb[1])}${hex(rgb[2])}${hex(rgb[3])}`;
+  }
+  return null;
+}
+
+function renderAppearancePanel() {
+  const panel = ui.panels.appearance;
+  const node = state.nodeIndex.get(state.selected);
+  if (!node) {
+    panel.replaceChildren(el('p', { class: 'empty', text: 'Select an element to change its colour, text or shape.' }));
+    return;
+  }
+  const selector = selectorForNode(node);
+  const rules = state.page.matched[node.id] ?? [];
+  const target = styleTarget(node);
+  const targetSelector = target?.selector ?? selector;
+  const ownRule =
+    rules.find((rule) => rule.file === target?.file && rule.selector === targetSelector) ??
+    (target?.selector ? null : rules[0]);
+  const file = ownRule?.file ?? target?.file ?? state.page.file;
+  const sheet = state.page.sheets.find((entry) => entry.file === file);
+  const ruleSelector = ownRule?.selector ?? targetSelector;
+  const onDisk = ownRule ? declsOf(ownRule) : {};
+  const current = { ...onDisk, ...pendingDecls(file, ruleSelector) };
+
+  const apply = (property, value) => {
+    const onDiskValue = onDisk[property] ?? '';
+    if (String(value) === String(onDiskValue)) cancelPending(file, ruleSelector, property);
+    pushOps(
+      layoutOps({
+        file,
+        version: sheet?.version,
+        selector: ruleSelector,
+        decls: { [property]: value },
+        previous: onDisk,
+        create: true,
+        createFile: Boolean(target?.create),
+      }),
+    );
+    if (value === '') delete current[property];
+    else current[property] = value;
+  };
+
+  const controls = el('div', { class: 'group__grid' });
+  for (const prop of APPEARANCE_PROPS) {
+    const value = current[prop.property] ?? '';
+    let input;
+    if (prop.kind === 'color') input = colorInput(value, (next) => apply(prop.property, next));
+    else if (prop.kind === 'select') {
+      input = selectInput(value, prop.options.map((option) => ({ value: option, label: option || '—' })), (next) => apply(prop.property, next));
+    } else input = textInput(value, (next) => apply(prop.property, next), { placeholder: prop.placeholder ?? '' });
+
+    const tokenButton = prop.token && !value
+      ? el('button', {
+          type: 'button',
+          class: 'btn btn--ghost',
+          text: prop.token,
+          title: `Use ${prop.token}`,
+          onclick: () => {
+            const token = state.page.tokens.flatMap((entry) => entry.tokens).find((entry) => entry.name === prop.token);
+            apply(prop.property, `var(${prop.token}${token ? '' : ''})`);
+          },
+        })
+      : null;
+    controls.append(field(prop.label, tokenButton ? el('div', { class: 'field__stack' }, input, tokenButton) : input, prop.help));
+  }
+
+  panel.replaceChildren(
+    groupHelp(
+      `Colour · text · shape · ${selector}`,
+      '이 요소의 색·글자·모양을 바꿉니다. 변경은 미리보기에 바로 보이고, Save를 눌러야 파일에 기록됩니다.',
+      controls,
+      el(
+        'p',
+        { class: 'muted' },
+        ownRule
+          ? `Editing ${ownRule.selector} in ${file}${ownRule.atRule ? ` (${ownRule.atRule})` : ''}.`
+          : `No rule yet; a new ${ruleSelector} block will be added to ${file}.`,
+      ),
+    ),
+  );
+}
+
 function renderLayoutPanel() {
   const panel = ui.panels.layout;
   const node = state.nodeIndex.get(state.selected);
@@ -1142,10 +1350,9 @@ function renderStructurePanel() {
         }),
       ),
     ),
+    framesSection(),
   );
 }
-
-/* ---- frames panel */
 
 /* ---- project panel */
 
@@ -1257,9 +1464,14 @@ function renderProjectPanel() {
   panel.replaceChildren(...sections);
 }
 
-function renderFramesPanel() {
-  const panel = ui.panels.frames;
-  const node = state.nodeIndex.get(state.selected);
+/**
+ * Page frames, as a section inside the Structure panel.
+ *
+ * These used to be their own tab, which read as a separate concept ("what is
+ * a frame?") when it is really one structural operation: wrap the whole body
+ * in a header/main/footer skeleton. Same panel, same pending/save path.
+ */
+function framesSection() {
   const page = state.page;
 
   const cards = FRAME_PRESETS.map((preset) =>
@@ -1299,9 +1511,12 @@ function renderFramesPanel() {
     ? null
     : el('p', { class: 'muted', text: 'No stylesheet linked: style.css is created next to the page to hold the frame CSS.' });
 
-  panel.replaceChildren(
-    groupHelp('Page frames', '페이지 전체를 헤더·사이드바·메인·푸터 골격으로 감쌉니다. 지금 페이지 내용은 프레임의 콘텐츠 슬롯으로 들어갑니다.', el('p', { class: 'muted', text: 'A frame wraps the page in a layout skeleton. Existing content moves into the frame slot.' }), ...cards),
-    groupHelp('Target', '프레임이 실제로 감쌀 대상입니다. body가 없으면 만들어지고, 이미 body가 있으면 그 안쪽 내용이 이동합니다.', el('p', { class: 'muted', text: target }), cssNote),
+  return groupHelp(
+    '페이지 골격',
+    '페이지 전체를 헤더·본문·푸터 같은 뼈대로 감쌉니다. 지금 페이지 내용은 그 안의 본문 자리로 들어갑니다. 처음 시작할 때 한 번 쓰는 기능입니다.',
+    ...cards,
+    el('p', { class: 'muted', text: target }),
+    cssNote,
   );
 }
 
@@ -1699,12 +1914,14 @@ function tabAvailability(node) {
   const tag = node?.tag;
   const isComponent = node?.component?.kind === 'foundation' || node?.component?.kind === 'component';
   return {
+    // Colour/text/shape is the first thing a beginner reaches for, so it is
+    // available for every element (and shows a prompt when nothing is picked).
+    appearance: Boolean(node && tag && !NON_RENDERED_TAGS.has(tag)),
     node: true,
     // No selection still shows the prompt to select something.
     layout: Boolean(node && tag && !NON_RENDERED_TAGS.has(tag)),
     component: Boolean(isComponent),
     structure: true,
-    frames: true,
     project: true,
   };
 }
@@ -1731,7 +1948,7 @@ function syncTabs(node) {
  */
 function resolvedTab(name, available) {
   if (available[name] !== false) return name;
-  return ['component', 'layout', 'node'].find((key) => available[key] !== false) ?? 'node';
+  return ['component', 'appearance', 'layout', 'node'].find((key) => available[key] !== false) ?? 'node';
 }
 
 function showTab(requested) {
@@ -1747,11 +1964,11 @@ function showTab(requested) {
     tab.disabled = tab.hidden;
     ui.panels[key].hidden = !selected;
   }
+  if (name === 'appearance') renderAppearancePanel();
   if (name === 'node') renderNodePanel();
   if (name === 'layout') renderLayoutPanel();
   if (name === 'component') renderComponentPanel();
   if (name === 'structure') renderStructurePanel();
-  if (name === 'frames') renderFramesPanel();
   if (name === 'project') renderProjectPanel();
 }
 
@@ -1809,10 +2026,28 @@ window.addEventListener('message', (event) => {
       const changed = JSON.stringify(target) !== JSON.stringify(state.target);
       state.target = target;
       if (changed) {
+        if (state.tab === 'appearance') renderAppearancePanel();
         if (state.tab === 'node') renderNodePanel();
         if (state.tab === 'layout') renderLayoutPanel();
       }
     }
+  }
+  // Drag-to-move: the bridge only reports intent; the op goes through the
+  // normal pending -> diff -> save path, so nothing is written until Save.
+  if (data.type === 'drag-move' && data.nodeId && data.targetId) {
+    const page = state.page;
+    if (!page) return;
+    pushOps(
+      moveOp({
+        file: page.file,
+        version: page.version,
+        nodeId: data.nodeId,
+        targetId: data.targetId,
+        position: data.position,
+      }),
+    );
+    const label = nodeLabel(state.nodeIndex.get(data.nodeId) ?? { tag: 'element' });
+    setStatus(`Moved ${label} ${data.position} another element — Save to write it`);
   }
   if (data.type === 'ready') {
     postToBridge({ type: 'picking', value: state.picking });
@@ -1840,6 +2075,7 @@ function discardPending() {
   state.pending = [];
   renderPending();
   // Fields show the pending value; drop it and repaint from disk.
+  if (state.tab === 'appearance') renderAppearancePanel();
   if (state.tab === 'layout') renderLayoutPanel();
   if (state.tab === 'node') renderNodePanel();
   if (state.tab === 'component') renderComponentPanel();
@@ -2057,7 +2293,7 @@ ui.pickerOpen.addEventListener('click', () => {
 (async () => {
   try {
     await loadProject();
-    showTab('node');
+    showTab('appearance');
     // Restore the last page and selection; ids are structural, so a stale id
     // simply fails the lookup and the panel shows the empty state.
     let saved = null;
