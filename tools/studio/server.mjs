@@ -15,7 +15,7 @@ import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve, sep } from 'node:path';
-import { networkInterfaces } from 'node:os';
+import { homedir, networkInterfaces } from 'node:os';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { scanHtml } from '../scan/html.mjs';
@@ -75,6 +75,38 @@ export function instrumentHtml(source) {
   return { html: out, instrumented: true, problems: [] };
 }
 
+
+
+/**
+ * The folder picker's reachable roots.
+ *
+ * Home is always included: "open a project" means "find it on my machine".
+ * The project is added separately rather than by widening to its parent,
+ * because the parent of a checkout in `/srv/app` would be all of `/srv`, and
+ * the parent of `/tmp/x` would be all of `/tmp`.
+ */
+export function browseRootsFor(configured, projectRoot) {
+  const roots = [];
+  const add = (dir) => {
+    const resolved = resolve(dir);
+    // A root nested in another adds nothing: containment already covers it.
+    if (roots.some((existing) => resolved === existing || resolved.startsWith(existing + sep))) return;
+    // Drop roots that the new one now covers.
+    for (let i = roots.length - 1; i >= 0; i -= 1) {
+      if (roots[i].startsWith(resolved + sep)) roots.splice(i, 1);
+    }
+    roots.push(resolved);
+  };
+
+  if (configured) {
+    add(configured);
+    if (projectRoot) add(projectRoot);
+    return roots;
+  }
+  add(homedir());
+  if (projectRoot) add(projectRoot);
+  return roots;
+}
 
 /* ------------------------------------------------------------------ host */
 
@@ -200,9 +232,10 @@ async function proxyRequest(req, res, target, pathname, search) {
  * @param {{root: string, port?: number, host?: string, quiet?: boolean, proxy?: string,
  *          token?: string|null, browseRoot?: string|null}} options
  *
- * `browseRoot` is the highest directory the folder picker may reach. It
- * defaults to the project's parent so switching between sibling projects is
- * one click, without exposing the whole filesystem.
+ * `browseRoot` is the highest directory the folder picker may reach (a single
+ * path, or a list). It defaults to the user's home directory, plus the
+ * project itself when the project lives elsewhere - a project checked out in
+ * `/srv` or `/tmp` must stay reachable without making all of `/` browsable.
  */
 export async function startStudio({
   root,
@@ -215,13 +248,15 @@ export async function startStudio({
 }) {
   // The project root is switchable at runtime, so it lives in one mutable
   // state object instead of being captured by every helper.
+  const projectRoot = resolve(root);
   const state = {
-    root: resolve(root),
-    browseRoot: resolve(browseRoot ?? join(resolve(root), '..')),
+    root: projectRoot,
+    // Roots are compared for containment, so they are absolute and unique.
+    browseRoots: browseRootsFor(browseRoot, projectRoot),
     token: resolveToken(host, token),
     host,
   };
-  const api = createApi(() => state.root, { browseRoot: () => state.browseRoot, state });
+  const api = createApi(() => state.root, { browseRoots: () => state.browseRoots, state });
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? host}`);
@@ -348,7 +383,7 @@ export async function startStudio({
     }
     if (proxy) console.log(`\x1b[2m· proxy ${proxy}\x1b[0m`);
     console.log(`\x1b[36m·\x1b[0m project ${state.root}`);
-    console.log(`\x1b[36m·\x1b[0m browse ${state.browseRoot}`);
+    console.log(`\x1b[36m·\x1b[0m browse ${state.browseRoots.join(', ')}`);
   }
 
   return {

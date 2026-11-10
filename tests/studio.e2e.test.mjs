@@ -333,3 +333,93 @@ test('e2e: a field returned to its disk value drops the pending change', async (
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('e2e: the inspector offers only the tabs that apply to the selection', async (t) => {
+  const browser = await launch();
+  if (!browser) {
+    t.skip('no Chromium available');
+    return;
+  }
+  const root = await project();
+  const studio = await startStudio({ root, port: 0, quiet: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(studio.url);
+    await page.waitForSelector('.tree__row');
+
+    const visibleTabs = () =>
+      page.$$eval('.tabs [role=tab]', (tabs) =>
+        tabs.filter((tab) => !tab.hidden).map((tab) => tab.textContent.replace('?', '').trim()),
+      );
+    const selectInTree = async (label) => {
+      const row = page.locator('#tree .tree__row', { hasText: label }).first();
+      await row.click();
+      await page.waitForFunction(() => document.querySelector('#node-path').textContent.length > 0);
+    };
+
+    // A foundation instance: its options are the reason the user clicked it,
+    // so the Component tab is both offered and selected.
+    await selectInTree('demo-disclosure');
+    assert.ok((await visibleTabs()).includes('Component'), 'Component tab applies to a foundation');
+    assert.equal(await page.getAttribute('#tab-component', 'aria-selected'), 'true', 'Component is selected for a foundation');
+    assert.ok(
+      await page.evaluate(() => !document.querySelector('#panel-component').hidden),
+      'the visible panel matches the selected tab',
+    );
+
+    // A plain paragraph has a box but no component settings.
+    await selectInTree('.page__lede');
+    const pTabs = await visibleTabs();
+    assert.ok(pTabs.includes('Layout'), 'Layout applies to a rendered element');
+    assert.ok(!pTabs.includes('Component'), 'Component is hidden without a component');
+
+    // <script> has no box: Layout would be meaningless.
+    await selectInTree('script');
+    const scriptTabs = await visibleTabs();
+    assert.ok(!scriptTabs.includes('Layout'), 'Layout is hidden for a non-rendered tag');
+    assert.ok(scriptTabs.includes('Element'), 'Element always applies');
+
+    // Exactly one panel is ever shown, whatever the selection did.
+    const shown = await page.$$eval('.panel', (panels) => panels.filter((p) => !p.hidden).length);
+    assert.equal(shown, 1, 'exactly one panel is visible');
+  } finally {
+    await studio.close();
+    await browser.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('e2e: every panel title carries a Korean help tooltip', async (t) => {
+  const browser = await launch();
+  if (!browser) {
+    t.skip('no Chromium available');
+    return;
+  }
+  const root = await project();
+  const studio = await startStudio({ root, port: 0, quiet: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(studio.url);
+    await page.waitForSelector('.tree__row');
+    // A rendered element, so every tab applies and the headings get rendered.
+    await page.locator('#tree .tree__row', { hasText: '.page__lede' }).first().click();
+    await page.waitForSelector('#tab-layout:not([hidden])');
+    await page.click('#tab-layout');
+
+    const helps = await page.$$eval('.tabs [role=tab] .help', (icons) =>
+      icons.map((icon) => ({ title: icon.getAttribute('title') ?? '', hidden: Boolean(icon.closest('[hidden]')) })),
+    );
+    assert.ok(helps.length >= 6, 'each tab has an icon');
+    for (const icon of helps) {
+      assert.match(icon.title, /[\uac00-\ud7a3]/, 'the tooltip is Korean');
+    }
+    // The icon inside a tab must not switch tabs when clicked.
+    const before = await page.getAttribute('#tab-layout', 'aria-selected');
+    await page.click('#tab-frames .help');
+    assert.equal(await page.getAttribute('#tab-layout', 'aria-selected'), before, 'clicking ? does not switch tabs');
+  } finally {
+    await studio.close();
+    await browser.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

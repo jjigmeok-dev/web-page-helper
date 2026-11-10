@@ -16,7 +16,7 @@ import { buildPageModel } from './model.mjs';
 import { discover, pageList, readSource, StudioError } from './discover.mjs';
 import { profileProject } from './profile.mjs';
 import { readdir, stat } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 function errorResponse(error) {
   if (error instanceof StudioError) {
@@ -39,29 +39,54 @@ function pagePath(input) {
 
 /* ---------------------------------------------------------- browse helpers */
 
-/** Rejects anything that escapes the browse base, absolute or via `..`. */
-function assertInside(base, target) {
-  const root = resolve(base);
+/** True when `path` is `root` or below it. Both must already be absolute. */
+function isInside(root, path) {
+  return path === root || path.startsWith(root + sep);
+}
+
+/** The root that contains `path`, or null. */
+function containingRoot(roots, path) {
+  // Roots can nest; the deepest match is the one that constrains navigation.
+  let best = null;
+  for (const root of roots) {
+    if (isInside(root, path) && (!best || root.length > best.length)) best = root;
+  }
+  return best;
+}
+
+/**
+ * Rejects any path that no browse root contains.
+ *
+ * The picker may have several roots (home and the current project), so this
+ * checks membership in the set instead of one prefix. Everything else - `..`,
+ * absolute escapes, symlink targets resolved by the caller - fails here.
+ */
+function assertBrowsable(roots, target) {
+  if (!roots.length) throw new StudioError('OUT_OF_ROOT', 'no browsable root is configured');
   const path = resolve(target);
-  if (path !== root && !path.startsWith(root + sep)) {
-    throw new StudioError('OUT_OF_ROOT', `outside the browsable root: ${path}`);
+  if (!containingRoot(roots, path)) {
+    throw new StudioError('OUT_OF_ROOT', `outside the browsable roots: ${path}`);
   }
   return path;
 }
 
-/** Resolves a picker path; empty means "start at the base". */
-function resolveBrowsePath(base, input) {
-  const root = resolve(base);
-  if (typeof input !== 'string' || !input.trim()) return root;
-  return assertInside(root, isAbsolute(input) ? input : join(root, input));
+/**
+ * Resolves a picker path against the roots. Empty means "start at the first
+ * root"; a relative path is resolved against `base` (the path the picker is
+ * currently showing) so `dir=beta` means "beta next to where I am".
+ */
+function resolveBrowsePath(roots, input, base = null) {
+  const seed = resolve(base ?? roots[0] ?? process.cwd());
+  if (typeof input !== 'string' || !input.trim()) return assertBrowsable(roots, seed);
+  return assertBrowsable(roots, isAbsolute(input) ? input : join(seed, input));
 }
 
 /**
  * @param {string|(() => string)} root Project root, or a getter when the studio
  *   can switch projects without restarting (the server keeps one state object).
- * @param {{browseRoot?: () => string, state?: object}} [options]
+ * @param {{browseRoots?: () => string[], state?: object}} [options]
  */
-export function createApi(root, { browseRoot = null, state = null } = {}) {
+export function createApi(root, { browseRoots = null, state = null } = {}) {
   // Resolved per call, never captured: a project switch must affect every
   // handler without rebuilding the API.
   const dir = () => (typeof root === 'function' ? root() : root);
@@ -156,26 +181,31 @@ export function createApi(root, { browseRoot = null, state = null } = {}) {
     /**
      * Lists one directory level for the folder picker.
      *
-     * Confined to `browseRoot`: a directory listing of the whole filesystem
-     * would let anyone who can reach the studio read the machine's layout, and
-     * `open` would then be a way to point the editor anywhere.
+     * Confined to the browse roots (home plus the current project): a listing
+     * of the whole filesystem would let anyone who can reach the studio read
+     * the machine's layout, and `open` would point the editor anywhere.
      */
     async browse(query) {
-      const base = browseRoot ? browseRoot() : join(dir(), '..');
-      const target = resolveBrowsePath(base, query.dir);
+      const roots = browseRoots ? browseRoots() : [join(dir(), '..')];
+      const target = resolveBrowsePath(roots, query.dir, query.base);
       const entries = await readdir(target, { withFileTypes: true });
       const dirs = entries
         .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
         .map((entry) => ({ name: entry.name, path: join(target, entry.name) }))
         .sort((a, b) => a.name.localeCompare(b.name));
       const files = entries.filter((entry) => entry.isFile() && !entry.name.startsWith('.'));
+      // `parent` stops at the root that contains this path: walking above it
+      // would only produce an OUT_OF_ROOT 400 on the next click.
+      const root = containingRoot(roots, target);
+      const parent = root && target !== root ? dirname(target) : null;
       return {
         status: 200,
         body: {
           ok: true,
           path: target,
-          base: resolve(base),
-          parent: target === resolve(base) ? null : dirname(target),
+          roots: roots.map((entry) => ({ path: entry, label: basename(entry) || entry })),
+          root,
+          parent,
           // A folder is openable when it holds an HTML page the studio can edit.
           openable: files.some((entry) => entry.name.endsWith('.html')),
           pages: files.filter((entry) => entry.name.endsWith('.html')).map((entry) => entry.name).sort(),
@@ -187,12 +217,12 @@ export function createApi(root, { browseRoot = null, state = null } = {}) {
     /** Switches the live project root. Returns the new inventory. */
     async open(body) {
       if (!state) throw new StudioError('NOT_SUPPORTED', 'this server cannot switch projects');
-      const base = browseRoot ? browseRoot() : join(dir(), '..');
-      const target = resolveBrowsePath(base, body.dir);
+      const roots = browseRoots ? browseRoots() : [join(dir(), '..')];
+      const target = resolveBrowsePath(roots, body.dir, body.base);
+      // The picker must not be able to point the editor at an arbitrary path.
+      assertBrowsable(roots, target);
       const stats = await stat(target).catch(() => null);
       if (!stats?.isDirectory()) throw new StudioError('NOT_A_DIR', `not a directory: ${target}`);
-      // The picker must not be able to point the editor at an arbitrary path.
-      assertInside(resolve(base), target);
       const pages = await pageList(target);
       if (!pages.length) throw new StudioError('NO_PAGES', `no .html files in ${target}`);
       state.root = target;

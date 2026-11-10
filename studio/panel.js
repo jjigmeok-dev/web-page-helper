@@ -57,6 +57,8 @@ const state = {
   // Picking is on by default: the studio opens on the page you came to edit.
   picking: true,
   tab: 'node',
+  // True once the user chooses a tab by hand for the current selection.
+  tabPinned: false,
   nodeIndex: new Map(),
   busy: false,
 };
@@ -210,6 +212,9 @@ function scrollTreeTo(id) {
 /* ------------------------------------------------------------ selection */
 
 function select(id, { scroll = false, fromTree = false, target = null } = {}) {
+  // A new element is a new context: let the panel pick its most relevant tab
+  // again, unless the user re-pins one by clicking a tab.
+  if (id !== state.selected) state.tabPinned = false;
   state.selected = id;
   // What the user actually clicked. Null means the host itself.
   state.target = target;
@@ -234,6 +239,20 @@ function select(id, { scroll = false, fromTree = false, target = null } = {}) {
   if (scroll) postToBridge({ type: 'select', id, scroll: true });
   else postToBridge({ type: 'select', id });
 
+  // Tabs follow the selection. Two cases, both needed for "show the settings
+  // that apply to what I clicked":
+  //  1. the active tab no longer applies -> fall back to the most specific one
+  //  2. the user has not pinned a tab for this selection -> open the most
+  //     specific one, so clicking a component lands on its options instead of
+  //     the generic attribute list.
+  const available = syncTabs(node);
+  const specific = ['component', 'layout'].find((key) => tabAvailability(node)[key]) ?? 'node';
+  const wanted = state.tabPinned ? state.tab : specific;
+  const active = resolvedTab(wanted, available);
+  if (active !== state.tab) {
+    showTab(active);
+    return;
+  }
   if (state.tab === 'node') renderNodePanel();
   if (state.tab === 'layout') renderLayoutPanel();
   if (state.tab === 'component') renderComponentPanel();
@@ -256,12 +275,46 @@ function loadPreview() {
 
 /* ------------------------------------------------------------ panels */
 
+/**
+ * A `?` next to a title, with the Korean explanation.
+ *
+ * Uses `title` rather than a custom tooltip so it also works on touch
+ * (long-press), keyboard focus, and screen readers. The icon is decorative in
+ * the a11y tree only when a text alternative exists, so the button carries the
+ * label and the description is duplicated into `aria-label` for SR users.
+ */
+function help(text) {
+  return el('button', {
+    type: 'button',
+    class: 'help',
+    title: text,
+    'aria-label': text,
+    tabindex: '0',
+    text: '?',
+  });
+}
+
 function group(title, ...children) {
   return el('section', { class: 'group' }, el('h3', { class: 'group__title', text: title }), ...children);
 }
 
-function field(label, input) {
-  return el('label', { class: 'field' }, el('span', { text: label }), input);
+/** Same as `group` but with the explanation icon beside the heading. */
+function groupHelp(title, helpText, ...children) {
+  return el(
+    'section',
+    { class: 'group' },
+    el('h3', { class: 'group__title' }, el('span', { text: title }), help(helpText)),
+    ...children,
+  );
+}
+
+function field(label, input, helpText = null) {
+  return el(
+    'label',
+    { class: 'field' },
+    el('span', { class: 'field__label' }, el('span', { text: label }), helpText ? help(helpText) : null),
+    input,
+  );
 }
 
 function textInput(value, onCommit, attrs = {}) {
@@ -571,7 +624,13 @@ function renderNodePanel() {
       el('button', { type: 'button', class: 'btn', text: 'Add', onclick: addAttr }),
     ),
   );
-  content.push(group(`Attributes (${attrRows.length})`, attrList));
+  content.push(
+    groupHelp(
+      `Attributes (${attrRows.length})`,
+      'HTML 속성을 직접 편집합니다. role·aria-*·tabindex·data-* 처럼 다른 패널이 다루지 않는 값을 여기서 바꿉니다.',
+      attrList,
+    ),
+  );
 
   if (rules.length) {
     const list = el('div', { class: 'rule__decls' });
@@ -580,7 +639,9 @@ function renderNodePanel() {
         el('div', {}, el('span', { text: rule.selector }), el('span', { class: 'rule__file', text: ` · ${rule.file}` })),
       );
     }
-    content.push(group(`Matching rules (${rules.length})`, list));
+    content.push(
+      groupHelp(`Matching rules (${rules.length})`, '이 요소에 실제로 적용 중인 CSS 규칙입니다. 위에서부터 우선순위가 높습니다.', list),
+    );
   }
 
   content.push(renderSuggestions(node));
@@ -654,19 +715,47 @@ function renderSuggestions(node) {
     );
   }
 
-  return group(`Suggestions (${list.length})`, body);
+  return groupHelp(`Suggestions (${list.length})`, '이 요소에서 고칠 만한 것을 제안합니다. Apply를 누르면 손으로 고친 것과 같은 대기 변경에 들어갑니다.', body);
 }
 
 /* ---- layout panel */
 
 const LAYOUT_PROPS = [
-  { key: 'display', label: 'display', options: ['', 'block', 'flex', 'grid', 'inline-flex', 'inline-grid', 'inline', 'inline-block', 'none'] },
-  { key: 'direction', property: 'flex-direction', label: 'flex-direction', options: ['', 'row', 'row-reverse', 'column', 'column-reverse'] },
-  { key: 'gap', label: 'gap' },
-  { key: 'padding', label: 'padding' },
-  { key: 'alignItems', property: 'align-items', label: 'align-items', options: ['', 'stretch', 'flex-start', 'center', 'flex-end', 'baseline'] },
-  { key: 'justifyContent', property: 'justify-content', label: 'justify-content', options: ['', 'flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly'] },
-  { key: 'columns', property: 'grid-template-columns', label: 'grid-template-columns' },
+  {
+    key: 'display',
+    label: 'display',
+    help: '요소가 화면에 어떻게 배치될지 정합니다. flex는 1차원 정렬, grid는 2차원 배치에 씁니다.',
+    options: ['', 'block', 'flex', 'grid', 'inline-flex', 'inline-grid', 'inline', 'inline-block', 'none'],
+  },
+  {
+    key: 'direction',
+    property: 'flex-direction',
+    label: 'flex-direction',
+    help: 'flex 자식이 놓이는 방향입니다. row는 가로, column은 세로입니다.',
+    options: ['', 'row', 'row-reverse', 'column', 'column-reverse'],
+  },
+  { key: 'gap', label: 'gap', help: 'flex·grid 자식 사이의 간격입니다. 예: 16px, 1rem, 8px 16px.' },
+  { key: 'padding', label: 'padding', help: '요소 안쪽 여백입니다. 예: 16px, 1rem 2rem.' },
+  {
+    key: 'alignItems',
+    property: 'align-items',
+    label: 'align-items',
+    help: 'flex·grid에서 자식을 교차축으로 정렬합니다. center면 세로 가운데(column이면 가로 가운데)입니다.',
+    options: ['', 'stretch', 'flex-start', 'center', 'flex-end', 'baseline'],
+  },
+  {
+    key: 'justifyContent',
+    property: 'justify-content',
+    label: 'justify-content',
+    help: 'flex·grid에서 자식을 주축으로 정렬합니다. space-between은 양 끝에 붙이고 사이를 고르게 벌립니다.',
+    options: ['', 'flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly'],
+  },
+  {
+    key: 'columns',
+    property: 'grid-template-columns',
+    label: 'grid-template-columns',
+    help: 'grid의 열 구성입니다. 예: repeat(3, 1fr), 200px 1fr.',
+  },
 ];
 
 function renderLayoutPanel() {
@@ -724,7 +813,7 @@ function renderLayoutPanel() {
     const input = prop.options
       ? selectInput(value, prop.options.map((option) => ({ value: option, label: option || '—' })), (next) => apply(property, next))
       : numberInput(value, (next) => apply(property, next));
-    controls.append(field(prop.label, input));
+    controls.append(field(prop.label, input, prop.help));
   }
 
   const ruleList = el('div', { class: 'group' });
@@ -744,9 +833,13 @@ function renderLayoutPanel() {
     );
   }
 
-  panel.replaceChildren(
-    group(
+  // Empty sections are noise: "Matching rules (0)" and a token list with
+  // nothing in it tell the user nothing, so they are not rendered at all.
+  const tokenCount = state.page.tokens.reduce((total, entry) => total + entry.tokens.length, 0);
+  const sections = [
+    groupHelp(
       `Box model · ${selector}`,
+      '선택한 요소의 레이아웃 값입니다. 변경은 이 요소를 실제로 꾸미는 CSS 규칙에 기록됩니다.',
       controls,
       el(
         'p',
@@ -756,16 +849,26 @@ function renderLayoutPanel() {
           : `No rule yet; a new ${ruleSelector} block will be added to ${file}.`,
       ),
     ),
-    group(`Matching rules (${rules.length})`, ruleList),
-    group(
-      'Design tokens',
-      el(
-        'div',
-        { class: 'rule__decls' },
-        ...state.page.tokens.flatMap((entry) => entry.tokens.map((token) => el('div', { text: `${token.name}: ${token.value}` }))),
+  ];
+  if (rules.length) {
+    sections.push(
+      groupHelp(`Matching rules (${rules.length})`, '이 요소에 적용 중인 규칙입니다. 어느 파일의 어느 선택자인지 함께 표시합니다.', ruleList),
+    );
+  }
+  if (tokenCount) {
+    sections.push(
+      groupHelp(
+        'Design tokens',
+        '이 페이지의 CSS 변수(커스텀 프로퍼티) 값입니다. 색·간격을 한 곳에서 바꿀 때 씁니다.',
+        el(
+          'div',
+          { class: 'rule__decls' },
+          ...state.page.tokens.flatMap((entry) => entry.tokens.map((token) => el('div', { text: `${token.name}: ${token.value}` }))),
+        ),
       ),
-    ),
-  );
+    );
+  }
+  panel.replaceChildren(...sections);
 }
 
 /* ---- component panel */
@@ -1529,12 +1632,77 @@ async function reloadPage({ keepSelection = true, status = null, tone = '' } = {
 
 /* ------------------------------------------------------------ tabs */
 
-function showTab(name) {
+/**
+ * Tabs that can do something for this node.
+ *
+ * `layout` is meaningless for elements with no box (`<script>`, `<title>`), and
+ * `component` is meaningless unless the element really is a foundation or a
+ * user component. Hiding them is the point of this function: the inspector
+ * should only offer settings that apply to what the user clicked.
+ */
+const NON_RENDERED_TAGS = new Set([
+  '#document',
+  'script',
+  'style',
+  'title',
+  'meta',
+  'link',
+  'base',
+  'head',
+  'noscript',
+  'template',
+]);
+
+function tabAvailability(node) {
+  const tag = node?.tag;
+  const isComponent = node?.component?.kind === 'foundation' || node?.component?.kind === 'component';
+  return {
+    node: true,
+    // No selection still shows the prompt to select something.
+    layout: Boolean(node && tag && !NON_RENDERED_TAGS.has(tag)),
+    component: Boolean(isComponent),
+    structure: true,
+    frames: true,
+    project: true,
+  };
+}
+
+/**
+ * Hides the tabs that do not apply to this node. Purely presentational: it
+ * never switches the active tab, so callers stay in control of what renders.
+ */
+function syncTabs(node) {
+  const available = tabAvailability(node);
+  for (const [key, tab] of Object.entries(ui.tabs)) {
+    const usable = available[key] !== false;
+    tab.hidden = !usable;
+    tab.disabled = !usable;
+    if (usable) tab.removeAttribute('aria-hidden');
+    else tab.setAttribute('aria-hidden', 'true');
+  }
+  return available;
+}
+
+/**
+ * Falls back to the most specific tab that still applies: a component's
+ * options beat the generic box model, which beats the raw attribute list.
+ */
+function resolvedTab(name, available) {
+  if (available[name] !== false) return name;
+  return ['component', 'layout', 'node'].find((key) => available[key] !== false) ?? 'node';
+}
+
+function showTab(requested) {
+  const available = syncTabs(state.nodeIndex.get(state.selected));
+  const name = resolvedTab(requested, available);
   state.tab = name;
   for (const [key, tab] of Object.entries(ui.tabs)) {
     const selected = key === name;
     tab.setAttribute('aria-selected', String(selected));
+    // Hidden tabs are out of the tab order entirely; only the selected one of
+    // the visible set is focusable (roving tabindex).
     tab.tabIndex = selected ? 0 : -1;
+    tab.disabled = tab.hidden;
     ui.panels[key].hidden = !selected;
   }
   if (name === 'node') renderNodePanel();
@@ -1546,20 +1714,35 @@ function showTab(name) {
 }
 
 for (const [name, tab] of Object.entries(ui.tabs)) {
-  tab.addEventListener('click', () => showTab(name));
+  tab.addEventListener('click', (event) => {
+    // The ? icon sits inside the tab button. Toggling a tab because the user
+    // asked what it does is a surprise; only the label switches.
+    if (event.target.closest('.help')) return;
+    // An explicit choice sticks for this selection; auto-selection would
+    // otherwise yank the user off the panel they just opened.
+    state.tabPinned = true;
+    showTab(name);
+  });
   tab.addEventListener('keydown', (event) => {
     const names = Object.keys(ui.tabs);
     const index = names.indexOf(name);
+    // Only visible tabs are reachable; hidden ones are not in the tab order.
+    const visible = names.filter((key) => !ui.tabs[key].hidden);
+    const position = visible.indexOf(name);
     if (event.key === 'ArrowRight') {
       event.preventDefault();
-      const next = names[(index + 1) % names.length];
-      showTab(next);
-      ui.tabs[next].focus();
+      const next = visible[(position + 1) % visible.length];
+      if (next) {
+        showTab(next);
+        ui.tabs[next].focus();
+      }
     } else if (event.key === 'ArrowLeft') {
       event.preventDefault();
-      const next = names[(index - 1 + names.length) % names.length];
-      showTab(next);
-      ui.tabs[next].focus();
+      const next = visible[(position - 1 + visible.length) % visible.length];
+      if (next) {
+        showTab(next);
+        ui.tabs[next].focus();
+      }
     }
   });
 }
@@ -1682,16 +1865,40 @@ document.addEventListener('keydown', (event) => {
  * at least one `.html` file are the ones worth opening; the rest are shown but
  * cannot be opened, which tells the user why instead of failing after a click.
  */
-const picker = { dir: null, openable: false };
+const picker = { dir: null, openable: false, roots: [] };
 
 function closePicker() {
   if (ui.pickerDialog.open) ui.pickerDialog.close();
 }
 
+/**
+ * Roots are shown as shortcuts above the listing: home and the current
+ * project. Without them, getting from `~` to a checkout in `/srv` means
+ * clicking Up a dozen times or typing a path, and there is no path input.
+ */
+function renderPickerRoots(roots) {
+  picker.roots = roots;
+  const bar = el('div', { class: 'picker__roots' });
+  for (const root of roots) {
+    bar.append(
+      el('button', {
+        type: 'button',
+        class: 'picker__root',
+        title: root.path,
+        text: root.label,
+        onclick: () => browseTo(root.path),
+      }),
+    );
+  }
+  return roots.length > 1 ? bar : null;
+}
+
 async function browseTo(dir) {
   ui.pickerBody.replaceChildren(el('p', { class: 'picker__empty', text: 'Reading folder…' }));
   try {
-    const listing = await api('browse', { query: dir ? { dir } : {} });
+    // `base` lets the server resolve a relative path against the folder the
+    // picker is showing rather than against its first root.
+    const listing = await api('browse', { query: dir ? { dir, base: picker.dir ?? '' } : {} });
     picker.dir = listing.path;
     picker.openable = listing.openable;
     ui.pickerPath.textContent = listing.path;
@@ -1703,6 +1910,8 @@ async function browseTo(dir) {
       : 'no .html files here — pick a folder that contains a page';
 
     const rows = [];
+    const rootBar = renderPickerRoots(listing.roots ?? []);
+    if (rootBar) rows.push(rootBar);
     for (const child of listing.dirs) {
       rows.push(
         el(
@@ -1717,7 +1926,7 @@ async function browseTo(dir) {
         ),
       );
     }
-    if (!rows.length) rows.push(el('p', { class: 'picker__empty', text: 'no subfolders' }));
+    if (rows.length === (rootBar ? 1 : 0)) rows.push(el('p', { class: 'picker__empty', text: 'no subfolders' }));
     ui.pickerBody.replaceChildren(...rows);
   } catch (error) {
     ui.pickerBody.replaceChildren(el('p', { class: 'picker__empty', text: error.message }));
@@ -1729,8 +1938,8 @@ async function browseTo(dir) {
 
 async function openPicker() {
   ui.pickerDialog.showModal();
-  // Start at the server's browse root (the project's parent by default), so
-  // sibling projects are visible immediately instead of one Up click away.
+  // Start at the server's first browse root (home by default). The root
+  // shortcuts above the listing jump to the project in one click.
   await browseTo(null);
 }
 
@@ -1784,9 +1993,9 @@ async function switchProject(dir) {
 
 ui.openProject.addEventListener('click', openPicker);
 ui.pickerUp.addEventListener('click', async () => {
-  // `parent` is null at the browse root; the button is disabled there.
+  // `parent` is null at the root containing the current path; disabled there.
   try {
-    const listing = await api('browse', { query: picker.dir ? { dir: picker.dir } : {} });
+    const listing = await api('browse', { query: picker.dir ? { dir: picker.dir, base: picker.dir } : {} });
     if (listing.parent) await browseTo(listing.parent);
   } catch (error) {
     reportError(error);

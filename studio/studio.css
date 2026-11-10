@@ -141,6 +141,13 @@ body {
   gap: 0.4rem;
 }
 
+/* The label text plus its help icon; the icon must not inherit the grid gap. */
+.field__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+}
+
 .field input[type='text'],
 .field input[type='number'],
 .field select,
@@ -337,9 +344,14 @@ body {
 }
 
 .tabs [role='tab'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
   font: inherit;
   font-size: 12px;
-  padding: 0.35rem 0.5rem;
+  /* A tab is a label plus a help icon; drop the inline padding so all six fit
+     one row in the inspector column. */
+  padding: 0.35rem 0.35rem;
   border: 0;
   border-block-end: 2px solid transparent;
   background: transparent;
@@ -385,6 +397,9 @@ body {
 }
 
 .group__title {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
   margin: 0;
   font-size: 11px;
   letter-spacing: 0.07em;
@@ -394,7 +409,9 @@ body {
 
 .group__grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* Two columns need ~19rem; the inspector pane is narrower than that at
+     1024px, where the selects were overflowing the panel edge. */
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
   gap: 0.45rem;
 }
 
@@ -793,6 +810,34 @@ body {
   padding: 0.3rem 0;
 }
 
+.picker__roots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0 0.8rem 0.5rem;
+  border-block-end: 1px solid var(--border);
+  margin-block-end: 0.3rem;
+}
+
+.picker__root {
+  font: inherit;
+  font-size: 11px;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-3);
+  color: var(--fg);
+  cursor: pointer;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker__root:hover {
+  border-color: var(--accent);
+}
+
 .picker__row {
   display: flex;
   align-items: center;
@@ -831,4 +876,46 @@ body {
   padding: 0.6rem 0.8rem;
   color: var(--muted);
   font-size: 12px;
+}
+
+/* help icon */
+.help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  margin-inline-start: 0.35rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+  flex: none;
+  vertical-align: middle;
+}
+
+.help:hover,
+.help:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+
+/* The tab's help icon is inside the tab button, so it must not inherit the
+   tab's pointer/underline treatment, and clicking it must not switch tabs. */
+.tabs .help {
+  pointer-events: auto;
+}
+
+.tabs .help:hover,
+.tabs .help:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
 }

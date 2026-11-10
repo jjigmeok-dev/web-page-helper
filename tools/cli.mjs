@@ -512,7 +512,7 @@ function tokenArg(args) {
   return value;
 }
 
-/** `--browse-root <dir>` caps how far the folder picker may navigate. */
+/** `--browse-root <dir>` replaces the default picker root (the user's home). */
 function browseRootArg(args) {
   const index = args.findIndex((arg) => arg === '--browse-root');
   if (index === -1) return null;
@@ -717,11 +717,6 @@ async function studio(args) {
   const host = hostArg(args);
   const browseRoot = browseRootArg(args);
   if (browseRoot && !existsSync(browseRoot)) return fail(`no such browse root: ${browseRoot}`);
-  // A browse root that cannot reach the project makes the picker lie: it would
-  // list folders the server refuses to open. Require the project to be inside.
-  if (browseRoot && root !== browseRoot && !root.startsWith(browseRoot + sep)) {
-    return fail(`--browse-root ${browseRoot} does not contain ${root}`);
-  }
   const instance = await startStudio({ root, port, host, proxy, token: tokenArg(args), browseRoot });
   info('pick an element, edit it, then Save — nothing is written until you confirm the diff');
   const shutdown = async () => {
@@ -749,7 +744,7 @@ async function main() {
   hf studio [--port 4174]        visual editor (select, edit, save)
   hf studio --host 0.0.0.0       also listen on the network (LAN / phone testing)
   hf studio --token <value>      pin the access token instead of generating one
-  hf studio --browse-root <dir>  limit how far the folder picker may navigate
+  hf studio --browse-root <dir>  start the folder picker elsewhere (default: ~)
   hf studio --proxy <url>        also forward unknown routes to the app backend
   hf projects add <dir>          register a frontend and profile it
   hf projects list               list registered projects

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApi } from '../tools/studio/api.mjs';
-import { isLoopback, resolveToken, startStudio, tokenMatches } from '../tools/studio/server.mjs';
+import { browseRootsFor, isLoopback, resolveToken, startStudio, tokenMatches } from '../tools/studio/server.mjs';
 
 /**
  * Two sibling projects under one browsable parent, which is the layout the
@@ -98,12 +98,14 @@ test('a token gates the API, the studio shell and project files alike', async ()
 
 test('browse lists directories under the browse root and marks openable ones', async () => {
   const base = await makeTree();
-  const api = createApi(join(base, 'alpha'), { browseRoot: () => base });
+  const api = createApi(join(base, 'alpha'), { browseRoots: () => [base] });
   try {
     const rootListing = await api.handle('browse', { query: {} });
     assert.equal(rootListing.status, 200);
     assert.equal(rootListing.body.path, base);
     assert.equal(rootListing.body.parent, null, 'the browse root has no parent to go up to');
+    assert.equal(rootListing.body.root, base);
+    assert.deepEqual(rootListing.body.roots.map((r) => r.path), [base]);
     assert.deepEqual(rootListing.body.dirs.map((d) => d.name), ['alpha', 'beta', 'empty']);
     assert.equal(rootListing.body.openable, false, 'the parent itself holds no pages');
 
@@ -123,7 +125,7 @@ test('browse lists directories under the browse root and marks openable ones', a
 
 test('browse refuses every path that escapes the browse root', async () => {
   const base = await makeTree();
-  const api = createApi(join(base, 'alpha'), { browseRoot: () => base });
+  const api = createApi(join(base, 'alpha'), { browseRoots: () => [base] });
   try {
     for (const dir of ['/', '/etc', '..', '../..', 'alpha/../..', join(base, '..'), join(base, 'alpha', '..', '..')]) {
       const result = await api.handle('browse', { query: { dir } });
@@ -136,7 +138,7 @@ test('browse refuses every path that escapes the browse root', async () => {
 
 test('a browse root equal to the project keeps siblings out of reach', async () => {
   const base = await makeTree();
-  const api = createApi(join(base, 'alpha'), { browseRoot: () => join(base, 'alpha') });
+  const api = createApi(join(base, 'alpha'), { browseRoots: () => [join(base, 'alpha')] });
   try {
     const own = await api.handle('browse', { query: {} });
     assert.equal(own.body.openable, true);
@@ -206,7 +208,7 @@ test('open refuses directories outside the browse root and leaves the root intac
 test('open edits are confined to the newly opened project', async () => {
   const base = await makeTree();
   const state = { root: join(base, 'alpha') };
-  const api = createApi(() => state.root, { browseRoot: () => base, state });
+  const api = createApi(() => state.root, { browseRoots: () => [base], state });
   try {
     // Before switching, a beta path is an escape from alpha.
     const before = await api.handle('source', { query: { file: 'home.html' } });
@@ -218,6 +220,71 @@ test('open edits are confined to the newly opened project', async () => {
     const after = await api.handle('source', { query: { file: 'home.html' } });
     assert.equal(after.status, 200);
     assert.match(after.body.text, /Beta/);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+/* ------------------------------------------------------- multiple roots */
+
+test('the picker can reach the home directory and the project', () => {
+  const project = '/srv/apps/site';
+  const roots = browseRootsFor(null, project);
+  assert.equal(roots[0], homedir(), 'home is the default starting point');
+  assert.ok(roots.includes(project), 'a project outside home stays reachable');
+
+  // A project inside home adds no second root: home already covers it.
+  assert.deepEqual(browseRootsFor(null, join(homedir(), 'work', 'site')), [homedir()]);
+
+  // An explicit --browse-root replaces home but keeps the project reachable.
+  const explicit = browseRootsFor('/data', '/srv/app');
+  assert.deepEqual(explicit, ['/data', '/srv/app']);
+});
+
+test('browsing starts at home and reaches a project outside it', async () => {
+  const base = await makeTree();
+  const api = createApi(join(base, 'alpha'), { browseRoots: () => [homedir(), base] });
+  try {
+    const listing = await api.handle('browse', { query: {} });
+    assert.equal(listing.body.path, homedir(), 'the picker opens at home by default');
+    assert.deepEqual(listing.body.roots.map((r) => r.path), [homedir(), base]);
+    // Home is above the project, so it is its own stopping point.
+    assert.equal(listing.body.parent, null);
+
+    // A path outside both roots is refused, and inside home is allowed.
+    const outside = await api.handle('browse', { query: { dir: join(base, '..', '..') } });
+    assert.equal(outside.body.code, 'OUT_OF_ROOT');
+    const inHome = await api.handle('browse', { query: { dir: homedir() } });
+    assert.equal(inHome.status, 200);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('parent stops at the root that contains the current directory', async () => {
+  const base = await makeTree();
+  const api = createApi(join(base, 'alpha'), { browseRoots: () => [base] });
+  try {
+    const listing = await api.handle('browse', { query: { dir: join(base, 'beta') } });
+    assert.equal(listing.body.parent, base);
+    // From the root itself there is nowhere to go up to.
+    const atRoot = await api.handle('browse', { query: { dir: base } });
+    assert.equal(atRoot.body.parent, null);
+    assert.equal(atRoot.body.root, base);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('a relative dir resolves against the directory being shown', async () => {
+  const base = await makeTree();
+  const api = createApi(join(base, 'alpha'), { browseRoots: () => [base] });
+  try {
+    // `base` tells the server where the picker currently is; without it a
+    // relative name would resolve from the root and miss the sibling.
+    const fromBeta = await api.handle('browse', { query: { dir: '../alpha', base: join(base, 'beta') } });
+    assert.equal(fromBeta.body.path, join(base, 'alpha'));
+    assert.equal(fromBeta.body.openable, true);
   } finally {
     await rm(base, { recursive: true, force: true });
   }
