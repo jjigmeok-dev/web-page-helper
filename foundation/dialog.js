@@ -1,131 +1,142 @@
-import { KEY, emit, needsId, options, part, parts, setState, trapTab } from './core.js';
+import { emit, needsId, options, part, parts, setState } from './core.js';
 
 /**
  * Dialog: modal or non-modal layer over the page.
  *
- * <div data-hf="dialog" data-hf-options='{"modal":true}'>
+ * Built on the native `<dialog>` element. The browser owns the modal
+ * contract — top layer, focus containment, `Esc`, `::backdrop`, inert page
+ * and focus return to the invoker — so this module only wires the API,
+ * options and events. Rebuilding those by hand (a `role="dialog"`, a manual
+ * focus trap, an `Esc` handler) is what the platform guidance says not to do.
+ *
+ * <dialog data-hf="dialog" data-hf-options='{"modal":true}'>
  *   <div data-hf-part="content" aria-labelledby="title">
  *     <h2 id="title">Title</h2>
  *     <button data-hf-part="close">Close</button>
  *   </div>
- * </div>
+ * </dialog>
  *
- * `[data-hf="dialog"]` is the backdrop/layer; the consumer styles it.
- * Modal dialogs trap Tab, close on Escape and on backdrop click, and
- * restore focus to whatever was focused before opening.
+ * The host must be a `<dialog>`. A non-modal dialog uses `show()`, which
+ * keeps the page interactive; `modal: true` (the default) uses `showModal()`.
  */
 export const meta = {
   name: 'dialog',
   file: import.meta.url,
-  summary: 'Focus-trapping layer with Escape and backdrop dismissal.',
+  summary: 'Native <dialog> layer with Escape, backdrop and focus return.',
   parts: { content: 'any', close: 'button' },
   // Parts mount() throws without. `parts` alone is the full list,
   // including optional slots the caller may leave out.
   required: ['content'],
   options: {
     modal: true,
-    closeOnEscape: true,
+    // Close when the user clicks the backdrop. `closedby` does this natively
+    // where supported; the canvas listener is the fallback.
     closeOnBackdrop: true,
-    lockScroll: true,
+    closeOnEscape: true,
     defaultOpen: false,
   },
   events: ['hf:open', 'hf:close'],
 };
 
 export function mount(root) {
+  if (root.tagName !== 'DIALOG') {
+    throw new Error('[hf] dialog needs a <dialog> element as its host, not <' + root.tagName.toLowerCase() + '>');
+  }
   const content = part(root, 'content') || root;
   const opts = options(root, meta.options);
   const modal = Boolean(opts.modal);
 
-  if (!content.hasAttribute('role')) content.setAttribute('role', 'dialog');
-  content.setAttribute('aria-modal', String(modal));
-  if (!content.hasAttribute('tabindex')) content.tabIndex = -1;
+  // The browser supplies role/metatdata; naming the dialog is all that is left.
   needsId(content, 'hf-dialog');
+  // `closedby` is Baseline-incomplete, so it is a hint, not a dependency: the
+  // `cancel` handler below is what actually enforces the option.
+  if (opts.closeOnBackdrop) root.setAttribute('closedby', 'any');
+  else root.setAttribute('closedby', 'closerequest');
 
-  let open = false;
-  let restoreTo = null;
   let destroyed = false;
 
-  function focusInside() {
-    const target = content.querySelector('[autofocus]') || content;
-    target.focus({ preventScroll: true });
+  /** Mirrors the element's real state rather than a parallel boolean. */
+  function sync(reason) {
+    setState(root, root.open ? 'open' : 'closed');
+    setState(content, root.open ? 'open' : 'closed');
+    emit(root, root.open ? 'hf:open' : 'hf:close', { reason });
   }
 
-  function render(next, reason) {
-    if (next === open) return;
-    open = next;
-    root.hidden = !open;
-    setState(root, open ? 'open' : 'closed');
-    setState(content, open ? 'open' : 'closed');
-    if (open) {
-      restoreTo = document.activeElement;
-      if (modal && opts.lockScroll) document.documentElement.setAttribute('data-hf-scroll-lock', '');
-      focusInside();
-      emit(root, 'hf:open', { reason });
-    } else {
-      if (modal && opts.lockScroll) document.documentElement.removeAttribute('data-hf-scroll-lock');
-      const back = restoreTo && document.contains(restoreTo) ? restoreTo : null;
-      restoreTo = null;
-      if (back) back.focus({ preventScroll: true });
-      emit(root, 'hf:close', { reason });
-    }
-  }
+  // Native dismissals (`Esc`, back gesture, `command="close"`, a
+  // `<form method="dialog">` submit) all end here. `close` fires for every
+  // one of them, so event symmetry comes free instead of from a key handler.
+  const onClose = () => sync('native');
 
-  const onKeyDown = (event) => {
-    if (!open) return;
-    if (event.key === KEY.ESCAPE && opts.closeOnEscape) {
-      event.preventDefault();
-      event.stopPropagation();
-      render(false, 'escape');
-      return;
-    }
-    if (modal) trapTab(event, content);
+  // `cancel` fires before `Esc`/back-gesture closes. Refusing it is the only
+  // thing the platform cannot decide for us, because it depends on options.
+  const onCancel = (event) => {
+    if (opts.closeOnEscape) return;
+    event.preventDefault();
   };
 
+  // Light dismiss: a click that lands on the dialog box itself rather than on
+  // its content is a backdrop click. `closedby="any"` handles this where it is
+  // supported; this listener covers the rest.
   const onClick = (event) => {
-    if (!open || !opts.closeOnBackdrop) return;
-    if (event.target === root || (!root.contains(content) && !content.contains(event.target))) {
-      render(false, 'backdrop');
-    }
+    if (!root.open || !opts.closeOnBackdrop) return;
+    if (event.target !== root) return;
+    root.close('backdrop');
   };
 
   const offs = parts(root, 'close').map((button) => {
-    const onClickClose = () => render(false, 'close');
+    const onClickClose = () => root.close('close');
     button.addEventListener('click', onClickClose);
     return () => button.removeEventListener('click', onClickClose);
   });
 
-  root.addEventListener('keydown', onKeyDown);
+  root.addEventListener('close', onClose);
+  root.addEventListener('cancel', onCancel);
   root.addEventListener('click', onClick);
-  render(Boolean(opts.defaultOpen), 'initial');
+  sync('initial');
+
+  if (opts.defaultOpen) {
+    if (modal) root.showModal();
+    else root.show();
+    sync('initial');
+  }
 
   return {
     get isOpen() {
-      return open;
+      return root.open;
+    },
+    /** `returnValue` from the last `<form method="dialog">` submit, if any. */
+    get returnValue() {
+      return root.returnValue;
     },
     open(reason = 'api') {
-      if (destroyed) return;
-      render(true, reason);
+      if (destroyed || root.open) return;
+      // `showModal()` is what makes the page inert, puts the dialog in the top
+      // layer and returns focus on close. `show()` leaves the page usable.
+      if (modal) root.showModal();
+      else root.show();
+      sync(reason);
     },
     close(reason = 'api') {
-      if (destroyed) return;
-      render(false, reason);
+      if (destroyed || !root.open) return;
+      // A `reason` survives the native `close` event, so the caller can tell a
+      // backdrop dismissal from an API one.
+      root.close(reason);
     },
     toggle(reason = 'api') {
-      if (destroyed) return;
-      render(!open, reason);
+      if (root.open) this.close(reason);
+      else this.open(reason);
     },
     setOpen(next, reason = 'api') {
-      if (destroyed) return;
-      render(Boolean(next), reason);
+      if (next) this.open(reason);
+      else this.close(reason);
     },
     destroy() {
       destroyed = true;
-      if (open) render(false, 'destroy');
-      root.removeEventListener('keydown', onKeyDown);
+      if (root.open) root.close('destroy');
+      root.removeEventListener('close', onClose);
+      root.removeEventListener('cancel', onCancel);
       root.removeEventListener('click', onClick);
       offs.forEach((off) => off());
-      if (open && modal && opts.lockScroll) document.documentElement.removeAttribute('data-hf-scroll-lock');
     },
   };
 }

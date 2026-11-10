@@ -153,18 +153,18 @@
       </section>
     </main>
 
-    <div class="demo-dialog" data-hf="dialog" id="demo-dialog" hidden>
+    <dialog class="demo-dialog" data-hf="dialog" id="demo-dialog">
       <div data-hf-part="content" aria-labelledby="demo-dialog-title">
         <h2 id="demo-dialog-title" style="margin: 0">Delete project?</h2>
         <p style="margin: 0; color: var(--hf-muted)">
-          This traps focus, closes on Escape or backdrop, and restores focus to the trigger.
+          Native &lt;dialog&gt;: the browser owns focus, Escape, the backdrop and returning focus to the trigger.
         </p>
         <div style="display: flex; gap: 0.5rem; justify-content: flex-end">
           <button class="hf-button" data-hf-part="close">Cancel</button>
           <button class="hf-button" data-hf-part="close">Delete</button>
         </div>
       </div>
-    </div>
+    </dialog>
 
     <div class="demo-toast" data-hf="toast" data-hf-options='{"timeout": 3500}'>
       <div data-hf-part="region"></div>

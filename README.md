@@ -207,10 +207,13 @@ hf studio --root ~/work/my-site --proxy http://127.0.0.1:8000
 | `tools/scan/` | HTML·CSS 스캐너 (모든 노드/선언의 바이트 범위) |
 | `tools/studio/` | 프로젝트 모델, 편집 엔진, 저널, API, 서버 |
 | `docs/EDITOR-PLAN.md` | 에디터 요구사항과 설계 |
+| `docs/web-platform.md` | 어떤 웹 API를 왜 쓰는지, Baseline 상태와 폴백 근거 |
 
 ### 파운데이션 계약
 
 파운데이션은 동작과 ARIA만 소유한다. `class`, `style`, `<style>`을 쓰지 않고, 상태는 `data-state`, `data-hf-*`, `aria-*`로만 노출한다. `hf validate`가 이를 강제한다.
+
+**동작은 플랫폼에, 모양은 소비자에게.** 브라우저가 이미 제공하는 계약은 다시 구현하지 않는다. 예를 들어 `dialog`는 `<dialog>` + `showModal()` 위에 얹혀 top layer·포커스 가둠·`Esc`·포커스 복귀를 플랫폼에 맡기고, API와 이벤트만 배선한다. 어떤 API를 조건 없이 써도 되는지는 [docs/web-platform.md](docs/web-platform.md)의 Baseline 표에 있다.
 
 ```js
 import { mount, meta } from './foundation/disclosure.js';

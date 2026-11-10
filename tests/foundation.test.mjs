@@ -216,10 +216,10 @@ test('accordion: single vs multiple, collapsible, defaultOpen, destroy', async (
   });
 });
 
-test('dialog: focus move, Tab trap, Escape, restore, scroll lock, backdrop', async () => {
+test('dialog: native element owns top layer, focus, Escape and focus return', async () => {
   await withPage(async ({ page }) => {
     await run(page, () => {
-      const { mount, click, key, assert } = window.hf;
+      const { mount, click, assert } = window.hf;
       const opener = document.createElement('button');
       opener.id = 'opener';
       document.body.append(opener);
@@ -227,61 +227,82 @@ test('dialog: focus move, Tab trap, Escape, restore, scroll lock, backdrop', asy
 
       const { el, controller } = mount(
         'dialog',
-        `<div data-hf="dialog" hidden>
+        `<dialog data-hf="dialog">
            <div data-hf-part="content">
              <input id="first" />
              <button data-hf-part="close">Close</button>
            </div>
-         </div>`,
+         </dialog>`,
       );
-      const content = el.querySelector('[data-hf-part="content"]');
-      assert.equal(content.getAttribute('role'), 'dialog');
-      assert.equal(content.getAttribute('aria-modal'), 'true');
+
+      // The platform provides these; anything this module set itself would be
+      // a duplicate, and the guidance forbids exactly that.
+      assert.equal(el.tagName, 'DIALOG');
+      assert.equal(el.getAttribute('role'), null, 'no hand-written role');
+      assert.equal(el.getAttribute('aria-modal'), null, 'no hand-written aria-modal');
+      assert.equal(el.open, false, 'closed until opened');
 
       controller.open();
-      assert.equal(el.hidden, false);
-      assert.ok(content.contains(document.activeElement), 'focus inside');
-      assert.ok(document.documentElement.hasAttribute('data-hf-scroll-lock'));
+      assert.equal(el.open, true, 'showModal() opened the element');
+      assert.equal(el.matches(':modal'), true, 'it is in the top layer');
+      assert.ok(el.contains(document.activeElement), 'the browser focused inside');
+      assert.equal(document.documentElement.hasAttribute('data-hf-scroll-lock'), false, 'no manual scroll lock');
 
-      key(content, 'Escape');
+      controller.close();
       assert.equal(controller.isOpen, false);
-      assert.equal(document.activeElement, opener, 'focus restored');
-      assert.equal(document.documentElement.hasAttribute('data-hf-scroll-lock'), false);
+      assert.equal(el.open, false);
 
+      // The backdrop is not an element the dialog contains, so the module
+      // closes on a click whose target is the dialog box itself.
       controller.open();
-      const input = document.getElementById('first');
-      const close = el.querySelector('[data-hf-part="close"]');
-      close.focus();
-      key(close, 'Tab');
-      assert.equal(document.activeElement, input, 'Tab wraps to first');
-      key(input, 'Tab', { shiftKey: true });
-      assert.equal(document.activeElement, close, 'Shift+Tab wraps to last');
-
-      click(content);
-      assert.equal(controller.isOpen, true, 'content click keeps open');
       click(el);
-      assert.equal(controller.isOpen, false, 'backdrop closes');
+      assert.equal(controller.isOpen, false, 'backdrop click closes');
     });
   });
 });
 
-test('dialog: non-modal skips trap and aria-modal', async () => {
+test('dialog: close buttons, cancel option, and host validation', async () => {
   await withPage(async ({ page }) => {
     await run(page, () => {
-      const { mount, key, assert } = window.hf;
+      const { mount, assert } = window.hf;
       const { el, controller } = mount(
         'dialog',
-        `<div data-hf="dialog" data-hf-options='{"modal":false}' hidden>
-           <div data-hf-part="content"><button data-hf-part="close">x</button></div>
-         </div>`,
+        `<dialog data-hf="dialog">
+           <div data-hf-part="content">
+             <button data-hf-part="close">Close</button>
+           </div>
+         </dialog>`,
       );
-      const content = el.querySelector('[data-hf-part="content"]');
-      assert.equal(content.getAttribute('aria-modal'), 'false');
       controller.open();
-      const close = el.querySelector('[data-hf-part="close"]');
-      close.focus();
-      const event = key(close, 'Tab');
-      assert.equal(event.defaultPrevented, false, 'no trap');
+      el.querySelector('[data-hf-part="close"]').click();
+      assert.equal(controller.isOpen, false, 'close button closes the dialog');
+    });
+
+    // `closeOnEscape: false` refusing `cancel` is the one decision the
+    // platform cannot make for us, so it is the one handler worth keeping.
+    await run(page, () => {
+      const { mount, assert } = window.hf;
+      const { el, controller } = mount(
+        'dialog',
+        `<dialog data-hf="dialog" data-hf-options='{"closeOnEscape":false}'>
+           <div data-hf-part="content"><button>x</button></div>
+         </dialog>`,
+      );
+      controller.open();
+      const cancel = new Event('cancel', { cancelable: true });
+      el.dispatchEvent(cancel);
+      assert.equal(cancel.defaultPrevented, true, 'Escape dismissal refused');
+      assert.equal(el.open, true);
+    });
+
+    // A host that is not a <dialog> cannot get the platform behavior, so it
+    // must fail loudly instead of degrading to a div overlay.
+    await run(page, () => {
+      const { mount, assert } = window.hf;
+      assert.throws(
+        () => mount('dialog', `<div data-hf="dialog"><div data-hf-part="content">x</div></div>`),
+        /needs a <dialog>/,
+      );
     });
   });
 });

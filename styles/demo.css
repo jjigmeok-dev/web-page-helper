@@ -159,25 +159,28 @@
 }
 
 /* dialog */
+/* Native <dialog>: the browser owns the top layer, centring and backdrop, so
+   no fixed positioning or z-index. `display` must stay scoped to [open] or it
+   overrides the element's own closed state. */
 .demo-dialog {
-  position: fixed;
-  inset: 0;
-  display: grid;
-  place-items: center;
+  inline-size: min(26rem, calc(100% - 2rem));
   padding: 1rem;
-  background: rgb(9 9 11 / 0.55);
-  z-index: 50;
-}
-
-.demo-dialog [data-hf-part='content'] {
-  width: min(26rem, 100%);
-  display: grid;
-  gap: 0.9rem;
-  padding: 1.25rem;
+  border: 1px solid var(--hf-border);
   border-radius: var(--hf-radius);
   background: var(--hf-surface);
   color: var(--hf-fg);
   box-shadow: 0 24px 64px rgb(0 0 0 / 0.25);
+}
+
+.demo-dialog::backdrop {
+  background: rgb(9 9 11 / 0.55);
+}
+
+.demo-dialog [data-hf-part='content'] {
+  /* The box itself is sized above; the content just fills it. */
+  width: 100%;
+  display: grid;
+  gap: 0.9rem;
 }
 
 /* toast */

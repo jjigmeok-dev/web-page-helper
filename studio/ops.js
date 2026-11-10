@@ -365,13 +365,13 @@ const FOUNDATION_SNIPPETS = {
     <div data-hf-part="panel">Second section content.</div>
   </div>
 </div>`,
-  dialog: `<div data-hf="dialog">
-  <div data-hf-part="content" role="document">
-    <h2>Dialog title</h2>
+  dialog: `<dialog data-hf="dialog" aria-labelledby="dialog-title">
+  <div data-hf-part="content">
+    <h2 id="dialog-title">Dialog title</h2>
     <p>Dialog body.</p>
     <button data-hf-part="close">Close</button>
   </div>
-</div>`,
+</dialog>`,
   popover: `<div data-hf="popover">
   <button data-hf-part="trigger">Open popover</button>
   <div data-hf-part="content">Popover content.</div>
