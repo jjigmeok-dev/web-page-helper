@@ -199,7 +199,7 @@ hf studio --root ~/work/my-site --proxy http://127.0.0.1:8000
 
 | 경로 | 역할 |
 | --- | --- |
-| `foundation/` | 헤드리스 파운데이션 13종 / 12개 파일(`switch`는 `toggle.js`에서 함께 내보낸다). 클래스/인라인 스타일/CSS를 절대 넣지 않는다 |
+| `foundation/` | 헤드리스 파운데이션 13종 / 12개 파일(`switch`는 `toggle.js`에서 함께 내보낸다). 클래스/인라인 스타일/CSS를 절대 넣지 않는다. `core.js`·`layer.js`는 내부 프리미티브 |
 | `compose/` | `defineComponent` — 파운데이션을 조립해 유저 컴포넌트를 정의 |
 | `runtime/` | `[data-hf]` 자동 마운트, `use()`, `hf-*` 엘리먼트 관찰 |
 | `components/` | 유저 컴포넌트 (`*.js` + `*.css`) |
@@ -213,7 +213,38 @@ hf studio --root ~/work/my-site --proxy http://127.0.0.1:8000
 
 파운데이션은 동작과 ARIA만 소유한다. `class`, `style`, `<style>`을 쓰지 않고, 상태는 `data-state`, `data-hf-*`, `aria-*`로만 노출한다. `hf validate`가 이를 강제한다.
 
-**동작은 플랫폼에, 모양은 소비자에게.** 브라우저가 이미 제공하는 계약은 다시 구현하지 않는다. 예를 들어 `dialog`는 `<dialog>` + `showModal()` 위에 얹혀 top layer·포커스 가둠·`Esc`·포커스 복귀를 플랫폼에 맡기고, API와 이벤트만 배선한다. 어떤 API를 조건 없이 써도 되는지는 [docs/web-platform.md](docs/web-platform.md)의 Baseline 표에 있다.
+**동작은 플랫폼에, 모양은 소비자에게.** 브라우저가 이미 제공하는 계약은 다시 구현하지 않는다.
+
+| 파운데이션 | 플랫폼이 하는 일 | 소비자가 하는 일 |
+| --- | --- | --- |
+| `dialog` | `<dialog showModal()>` — top layer·포커스 가둠·`Esc`·포커스 복귀 | `dialog`/`::backdrop` 스타일 |
+| `popover` | `popover` — top layer·light dismiss·`Esc`·포커스 복귀 | `anchor-name` + `position-area` 배치 |
+| `menu` | 위와 같음 | 위와 같음 |
+| `accordion` | `<details name>` — 열림 상태·단일 확장·키보드 활성화 | `summary`/`[open]` 스타일 |
+
+어떤 API를 조건 없이 써도 되는지는 [docs/web-platform.md](docs/web-platform.md)의 Baseline 표에 있다.
+
+#### 앵커 레이어 계약 (`popover`, `menu`)
+
+두 파운데이션은 패널을 **top layer로 승격**한다. 승격되면 `position: absolute`가 더 이상 트리거를 기준으로 풀리지 않으므로, 소비자는 **anchor positioning**으로 배치해야 한다.
+
+```css
+[data-hf-part='trigger'] { anchor-name: --my-layer; }
+
+[data-hf-part='content'], /* popover */
+[data-hf-part='list'] {   /* menu */
+  position: fixed;
+  margin: 0.35rem 0 0;
+  inset: auto;
+  position-anchor: --my-layer;
+  position-area: bottom span-right;
+  position-try-fallbacks: flip-block; /* 공간이 없으면 위로 뒤집기 */
+}
+```
+
+`anchor-name`을 **명시**해야 한다. 암묵적 앵커는 트리거 클릭으로 열 때만 적용되므로, `controller.open()`으로 열면 패널이 뷰포트 원점에 놓인다.
+
+`popover`/`commandfor`/anchor positioning 중 하나라도 없으면 승격하지 않고 **인플로우 폴백**(`hidden` + 자체 `pointerdown`/`keydown`)으로 동작한다. 승격만 하고 배치를 못 하면 패널이 엉뚱한 곳에 그려지기 때문이다. `[popover]:not(:popover-open)`는 `styles/base.css`가 `display: none !important`로 막는다 — 소비자가 `display: grid`를 주면 닫힌 패널이 화면을 덮는다.
 
 ```js
 import { mount, meta } from './foundation/disclosure.js';
@@ -230,6 +261,32 @@ export default {
   <div data-hf-part="panel">Body</div>
 </div>
 ```
+
+#### `accordion`의 두 가지 마크업
+
+`accordion`은 `[data-hf-part="item"]`의 태그를 보고 경로를 고른다.
+
+```html
+<!-- 네이티브: 배타 확장·키보드·상태를 <details name>이 처리하고, JS가 없어도 열린다 -->
+<div data-hf="accordion" data-hf-options='{"type":"single"}'>
+  <details data-hf-part="item">
+    <summary data-hf-part="trigger">Section</summary>
+    <div data-hf-part="panel">Body</div>
+  </details>
+</div>
+
+<!-- ARIA: summary로 표현할 수 없는 레이아웃(제목 안에 배지·버튼이 섞인 경우 등) -->
+<div data-hf="accordion" data-hf-options='{"type":"single","collapsible":true}'>
+  <div data-hf-part="item">
+    <h3><button data-hf-part="trigger">Section</button></h3>
+    <div data-hf-part="panel">Body</div>
+  </div>
+</div>
+```
+
+한 아코디언 안에서 두 마크업을 섞으면 `type: 'single'`의 진실 공급원이 둘이 되므로 `mount()`가 던진다.
+
+`collapsible: false`는 플랫폼에 대응물이 없다(`toggle`은 취소 불가). 그래서 `<details>` 경로에서는 사용자가 닫으려는 순간 `toggle` 안에서 `open`을 되돌린다 — 같은 태스크라 페인트 전에 끝나 깜빡이지 않는다. 형제가 열려 닫히는 경우는 거부하지 않는다(그건 배타성이 하는 일이다).
 
 #### `meta.parts` vs `meta.required`
 

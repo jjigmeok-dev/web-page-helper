@@ -516,7 +516,10 @@ const FORBIDDEN = [
 ];
 
 async function validate() {
-  const files = (await readdir(FOUNDATION_DIR)).filter((file) => file.endsWith('.js') && file !== 'core.js' && file !== 'index.js');
+  // `core.js` and `layer.js` are internal primitives, not mountable foundations.
+  const files = (await readdir(FOUNDATION_DIR)).filter(
+    (file) => file.endsWith('.js') && !['core.js', 'layer.js', 'index.js'].includes(file),
+  );
   let issues = 0;
 
   for (const file of files) {

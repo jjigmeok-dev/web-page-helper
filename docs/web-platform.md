@@ -21,11 +21,11 @@ Baseline 상태는 세 단계다.
 | 파운데이션 | 기반 | Baseline | 결정 |
 |---|---|---|---|
 | `dialog` | `<dialog>` + `showModal()` | **widely** (2022-03-14) | 네이티브 사용. 수동 포커스 트랩 제거 |
-| `accordion` | `div` + `button` + ARIA | — | **유지 중** (아래 참고) |
+| `accordion` | `<details name>` / `div` + `button` + ARIA | `details-name` **newly** | **이중 경로**: 마크업이 `<details>`면 네이티브 |
 | `tabs` | `role="tablist"` + roving tabindex | — | **유지 중** |
 | `switch` | `role="switch"` + `aria-checked` | `switch-control` **limited** | 수동 유지가 맞음 |
-| `popover` | `div` + `position` | `popover` **newly** | 단계적 전환 후보 |
-| `menu` | `div` + ARIA menu 패턴 | `popover` 부품 **newly** | 유지 |
+| `popover` | `popover` + `commandfor` (앵커는 anchor positioning) | `popover` **newly** | **네이티브 채택**, 미지원 시 인플로우 폴백 |
+| `menu` | `popover` + `commandfor` + roving tabindex | `popover` **newly** | **네이티브 채택** (클리핑 실측 후) |
 | `tooltip` | `aria-describedby` | `interestfor` **limited** | 수동 유지가 맞음 |
 
 ### 왜 `dialog`를 바꿨나
@@ -54,12 +54,23 @@ Baseline 상태는 세 단계다.
 | `cancel` | `closeOnEscape: false`일 때만 `preventDefault()`. 옵션이므로 플랫폼이 모름 |
 | `click` (target === dialog) | 백드롭 클릭. `closedby`가 **limited**라 폴백이 필요 |
 
-### 왜 `accordion`은 아직 안 바꿨나
+### 왜 `accordion`은 마크업에 따라 갈라지나
 
-가이드는 `<details name="...">`를 권한다. `details`는 widely지만 `details-name`은 **newly**(2024-09-03)다.
-단일 확장(`type: 'single'`)을 `name`으로 처리하려면 `details-name`이 필요한데, 이 프로젝트는 의존성 없는 무빌드를 표방하므로
-폴리필 없이 넘어가면 구형 브라우저에서 다중 확장으로 동작한다.
-**전환 조건**: `details-name` widely 도달, 또는 `name` 미지원 시 기존 ARIA 경로로 폴백하는 이중 경로 구현.
+`<details name>`은 배타 확장·키보드 활성화·상태 노출을 **플랫폼이** 처리하고, JS가 없어도 열린다.
+반면 `summary`로 표현할 수 없는 레이아웃(제목 안에 배지·버튼이 섞인 경우 등)이 있다.
+그래서 전환은 **마크업이 결정**한다: `[data-hf-part="item"]`이 `<details>`면 네이티브, 아니면 기존 ARIA 경로다.
+한 아코디언에서 섞으면 `type: 'single'`의 진실 공급원이 둘이 되므로 `mount()`가 거부한다.
+
+실측으로 확인한 제약 셋:
+
+| 제약 | 실측 | 처리 |
+|---|---|---|
+| `toggle`은 취소할 수 없음 | `beforetoggle` 없음, `preventDefault()` 무효 | `collapsible: false`는 `toggle` 안에서 `open = true`로 되돌림 (같은 태스크, 페인트 전) |
+| 프로그램적 `open`은 `toggle`을 쏘지 않음 | 리스너 로그 빈 배열 | API 경로는 이벤트에 의존하지 않고 직접 상태를 반영 |
+| `name` 미지원이면 배타가 사라짐 | 프로토타입에서 `name` 삭제 → 둘 다 열림 | 같은 루프가 형제를 닫아 준다 (테스트로 고정) |
+
+`hidden`은 `<details>`에서 쓰지 않는다. 닫힌 콘텐츠는 UA가 이미 렌더링하지 않으므로,
+`hidden`을 걸면 `open` 속성과 상태가 둘로 갈라진다.
 
 ### 왜 `switch`는 수동이 맞나
 
@@ -75,24 +86,24 @@ Baseline 상태는 세 단계다.
 | 기능 | 상태 | 하한 | 비고 |
 |---|---|---|---|
 | `dialog` | **widely** | 2022-03-14 | ✅ 사용 중 |
-| `details` | **widely** | 2020-01-15 | 미사용 |
+| `details` | **widely** | 2020-01-15 | ✅ 사용 중 (accordion 네이티브 경로) |
 | `:has()` | **widely** | 2023-12-19 | 스튜디오 CSS에서 사용 |
-| `popover` | newly | 2025-01-27 | 전환 후보 |
-| `invoker-commands` (`commandfor`) | newly | 2025-12-12 | 전환 후보 |
-| `field-sizing: content` | newly | 2026-06-16 | textarea 자동 높이 대체 |
+| `popover` | newly | 2025-01-27 | ✅ 사용 중 (popover·menu) |
+| `invoker-commands` (`commandfor`) | newly | 2025-12-12 | ✅ 사용 중 (팝오버 열고 닫기) |
+| `field-sizing: content` | newly | 2026-06-16 | ✅ 사용 중 (스튜디오 값 입력) |
+| `details-name` | newly | 2024-09-03 | ✅ 사용 중 (accordion 단일 확장) |
 | `scrollbar-color` | newly | 2025-12-12 | `::-webkit-scrollbar` 대체 |
 | `transition-behavior` | newly | 2024-08-06 | top layer 등장/퇴장 애니메이션 |
 | `view-transitions` | newly | 2025-10-14 | — |
-| `details-name` | newly | 2024-09-03 | accordion 전환 조건 |
 
 **폴백 없이 쓰면 안 되는 것 (limited):**
 
 | 기능 | 지원 현황 | 대체 |
 |---|---|---|
-| `move-before` | Chrome 133+, Firefox 144+, **Safari 미지원** | `before()` + 포커스/캡처 복구 |
+| `move-before` | Chrome 133+, Firefox 144+, **Safari 미지원** | `before()` + 포커스/캡처 복구. 이 스튜디오는 적용 지점 없음 (아래 4.3) |
 | `switch-control` | **Safari 전용** | `role="switch"` |
 | `interest-invokers` (`interestfor`) | Chrome 149+ | `mouseenter`/`focusin` |
-| `anchor-positioning` | Safari 27+ | 수동 좌표 계산 |
+| `anchor-positioning` | Safari 27+ | 팝오버를 승격하지 않고 인플로우로 유지 |
 | `focusgroup` | Chrome 150+ | roving tabindex |
 | `hidden-until-found` | Safari 미지원 | `hidden` |
 | `dialog-closedby` | Chrome 134+, Firefox 141+ | `cancel` + 클릭 핸들러 |
@@ -110,6 +121,8 @@ Baseline 상태는 세 단계다.
 | 네이티브가 주는 것 | 파운데이션이 하는 것 |
 |---|---|
 | `<dialog>`의 top layer·포커스·Esc | `open()`/`close()`/`toggle()` API와 `hf:open`/`hf:close` 이벤트 |
+| `popover`의 top layer·light dismiss·Esc·포커스 복귀 | 같은 API/이벤트. 상태 미러링만 직접 |
+| `<details>`의 열림 상태·배타(`name`)·키보드 활성화 | 같은 API/이벤트. `open`을 진실로 삼음 |
 | `[open]` 속성으로 상태 노출 | `data-state="open"` 미러링 (소비자 CSS 훅) |
 | `::backdrop` | 소비자가 `dialog::backdrop`으로 스타일 |
 
@@ -145,7 +158,20 @@ rule.style.length   // 여러 롱핸드로 쪼개져 있고 전부 ""
 트리도 같은 문서 기준으로 다시 만들고, 선택은 태그·속성·텍스트 지문으로 재해석한다.
 
 **트레이드오프**: 구조 편집 시 iframe이 리로드되어 페이지 스크립트 상태(열린 아코디언 등)가 초기화된다.
-`moveBefore()`가 widely가 되면 상태를 보존한 채 옮길 수 있다.
+스크롤 위치는 `scroll-to` 브리지 메시지로 복원한다. 선택은 지문으로 재해석하므로 유지된다.
+
+### 4.3 `moveBefore()`는 여기에 적용 지점이 없다
+
+`moveBefore()`는 DOM 노드를 옮기면서 iframe·동영상·포커스 같은 **살아있는 상태**를 보존한다.
+이 스튜디오에는 그런 이동이 없다.
+
+- `moveNode`는 DOM 조작이 아니라 **소스 텍스트 편집**이다 (`tools/studio/edit.mjs`).
+  이동 = 원본 구간 제거 + 목적지 삽입이고, 결과는 파일에 기록된다.
+- 프리뷰는 서버가 만든 문서를 iframe `src`로 통째 교체한다. 옮길 노드가 DOM에 남아 있지 않다.
+
+따라서 `moveBefore()`를 쓸 수 있는 곳이 없다. 리로드를 없애려면 구조 편집을
+"문서 재생성"이 아니라 "살아있는 DOM 패치"로 바꿔야 하고, 그건 편집 모델 자체를 바꾸는 일이다.
+`moveBefore` 지원 여부와 무관한 결정이므로 전환 후보에서 뺀다.
 
 ---
 
@@ -153,13 +179,15 @@ rule.style.length   // 여러 롱핸드로 쪼개져 있고 전부 ""
 
 우선순위는 **효과 / 위험** 비율.
 
-1. **`popover` + `commandfor`** (newly) — `popover.js`·`menu.js`의 outside-click·Escape·포커스 복원 배선을
-   브라우저에 넘길 수 있다. `popover`가 widely에 가까워지면 진행. 단 `focusgroup`은 limited라 roving tabindex는 유지.
-2. **`details-name`** (newly) — accordion 전환. 폴백 경로가 필요.
-3. **`field-sizing: content`** (newly) — 스튜디오 textarea 자동 높이.
-4. **`moveBefore()`** (limited) — 프리뷰 리로드 제거. Safari 지원 후.
+완료된 전환은 1절 표에 반영했다. 남은 후보:
+
+1. **`transition-behavior`** (newly) — top layer 요소(`dialog`, `popover`)의 등장/퇴장 애니메이션.
+   지금은 즉시 나타나고 사라진다. `@starting-style`과 함께 써야 하므로 별도 작업.
+2. **`scrollbar-color`** (newly) — `::-webkit-scrollbar` 대체.
+3. **`focusgroup`** (Chrome 150+) — roving tabindex 대체. 아직 limited라 보류.
 
 각 항목은 **폴백 경로가 먼저 있고 그 다음 채택**이다. 폴백 없는 채택은 하지 않는다.
+`moveBefore()`는 4.3의 이유로 후보에서 제외했다.
 
 ---
 

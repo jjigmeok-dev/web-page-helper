@@ -1,4 +1,5 @@
 import { KEY, emit, isDisabled, needsId, options, part, parts, setState } from './core.js';
+import { capabilities, createLayer } from './layer.js';
 
 /**
  * Menu: a button that opens a listbox-like menu of actions.
@@ -10,6 +11,19 @@ import { KEY, emit, isDisabled, needsId, options, part, parts, setState } from '
  *     <button data-hf-part="item" role="menuitem">Delete</button>
  *   </div>
  * </div>
+ *
+ * The list is an anchored layer (see `layer.js`). Promoting it matters: inside
+ * a card with `overflow: hidden` the in-flow list measured 165px tall but only
+ * 5px visible, so it is promoted to the top layer wherever the browser can
+ * position it. Consumers position it with anchor positioning:
+ *
+ *   [data-hf-part='trigger'] { anchor-name: --my-menu; }
+ *   [data-hf-part='list'] {
+ *     position: fixed; margin: 0;
+ *     position-anchor: --my-menu;
+ *     position-area: bottom span-right;
+ *     position-try-fallbacks: flip-block;
+ *   }
  *
  * Items marked `aria-disabled="true"` stay focusable but cannot activate.
  * Use `data-hf-part="separator"` for dividers (decorative: supply own markup).
@@ -37,11 +51,20 @@ export function mount(root, { labelOf, typeahead: makeTypeahead } = {}) {
   trigger.setAttribute('aria-expanded', 'false');
   trigger.setAttribute('aria-controls', needsId(list, 'hf-menu-list'));
   if (!list.hasAttribute('role')) list.setAttribute('role', 'menu');
-  list.hidden = true;
+  // `auto` supplies light dismiss and Escape; the list never wants to outlive
+  // an interaction started anywhere else.
+  const layer = createLayer(list, { onToggle: (next) => render(next, reason ?? 'dismiss') });
+  const { isNative } = layer;
+  const { hasCommand } = capabilities();
+  if (isNative && hasCommand) {
+    trigger.setAttribute('commandfor', list.id);
+    trigger.setAttribute('command', 'toggle-popover');
+  }
 
   let open = false;
   let active = -1;
   let destroyed = false;
+  let reason = null;
 
   const search = makeTypeahead
     ? makeTypeahead((text) => items().findIndex((item) => (labelOf ? labelOf(item) : item.textContent.trim().toLowerCase()).startsWith(text)))
@@ -57,10 +80,9 @@ export function mount(root, { labelOf, typeahead: makeTypeahead } = {}) {
     list_[active].focus({ preventScroll: true });
   }
 
-  function render(next, reason) {
+  function render(next, why) {
     if (next === open) return;
     open = next;
-    list.hidden = !open;
     trigger.setAttribute('aria-expanded', String(open));
     setState(root, open ? 'open' : 'closed');
     setState(trigger, open ? 'open' : 'closed');
@@ -68,14 +90,24 @@ export function mount(root, { labelOf, typeahead: makeTypeahead } = {}) {
       const list_ = items();
       const checked = list_.findIndex((item) => item.getAttribute('aria-checked') === 'true');
       focusItem(checked >= 0 ? checked : 0);
-      emit(root, 'hf:open', { reason });
+      emit(root, 'hf:open', { reason: why });
     } else {
       active = -1;
       items().forEach((item) => {
         item.tabIndex = -1;
       });
-      emit(root, 'hf:close', { reason });
+      emit(root, 'hf:close', { reason: why });
     }
+  }
+
+  /** Drives the layer, then mirrors. `toggle` has usually already applied it. */
+  function setOpen(next, why) {
+    if (destroyed || next === open) return;
+    reason = why;
+    if (next) layer.show();
+    else layer.hide();
+    render(next, why);
+    reason = null;
   }
 
   function choose(index, reason) {
@@ -86,18 +118,23 @@ export function mount(root, { labelOf, typeahead: makeTypeahead } = {}) {
       const value = item.getAttribute('aria-checked') !== 'true';
       item.setAttribute('aria-checked', String(value));
     }
-    render(false, 'select');
+    setOpen(false, 'select');
     trigger.focus({ preventScroll: true });
   }
 
-  const onTriggerClick = () => render(!open, 'trigger');
+  // A trusted click is already handled by `commandfor`; a synthetic one never
+  // reaches the invoker command, so only that case falls through to JS.
+  const onTriggerClick = (event) => {
+    if (isNative && hasCommand && event.isTrusted) return;
+    setOpen(!open, 'trigger');
+  };
   const onTriggerKey = (event) => {
     if (event.key === KEY.ARROW_DOWN || event.key === KEY.ENTER || event.key === KEY.SPACE) {
       event.preventDefault();
-      render(true, 'keyboard');
+      setOpen(true, 'keyboard');
     } else if (event.key === KEY.ARROW_UP) {
       event.preventDefault();
-      render(true, 'keyboard');
+      setOpen(true, 'keyboard');
       focusItem(items().length - 1);
     }
   };
@@ -117,11 +154,15 @@ export function mount(root, { labelOf, typeahead: makeTypeahead } = {}) {
       event.preventDefault();
       focusItem(list_.length - 1);
     } else if (event.key === KEY.ESCAPE) {
-      event.preventDefault();
-      render(false, 'escape');
-      trigger.focus({ preventScroll: true });
+      // `auto` closes itself for a real key press and restores focus. A
+      // synthetic key never reaches the platform, so it is handled here.
+      if (!isNative || !event.isTrusted) {
+        event.preventDefault();
+        setOpen(false, 'escape');
+        trigger.focus({ preventScroll: true });
+      }
     } else if (event.key === KEY.TAB) {
-      render(false, 'tab');
+      setOpen(false, 'tab');
     } else if (event.key === KEY.ENTER || event.key === KEY.SPACE) {
       event.preventDefault();
       choose(active, 'keyboard');
@@ -140,33 +181,43 @@ export function mount(root, { labelOf, typeahead: makeTypeahead } = {}) {
   };
 
   const onOutside = (event) => {
-    if (open && !root.contains(event.target)) render(false, 'outside');
+    if (open && !root.contains(event.target)) setOpen(false, 'outside');
   };
 
-  trigger.addEventListener('click', onTriggerClick);
   trigger.addEventListener('keydown', onTriggerKey);
+  trigger.addEventListener('click', onTriggerClick);
   list.addEventListener('keydown', onListKey);
   list.addEventListener('click', onClick);
+  // `auto` dismisses light clicks natively; this is what covers synthetic
+  // ones, and it is idempotent when the platform already closed the layer.
   document.addEventListener('pointerdown', onOutside);
 
   return {
     get isOpen() {
       return open;
     },
-    open(reason = 'api') {
-      if (!destroyed) render(true, reason);
+    /** True when the browser owns top layer and dismissal for this instance. */
+    get isNative() {
+      return isNative;
     },
-    close(reason = 'api') {
-      if (!destroyed) render(false, reason);
+    open(why = 'api') {
+      setOpen(true, why);
+    },
+    close(why = 'api') {
+      setOpen(false, why);
     },
     destroy() {
+      // Close first: `setOpen` is a no-op once `destroyed` is set.
+      if (open) setOpen(false, 'destroy');
       destroyed = true;
-      if (open) render(false, 'destroy');
       trigger.removeEventListener('click', onTriggerClick);
       trigger.removeEventListener('keydown', onTriggerKey);
       list.removeEventListener('keydown', onListKey);
       list.removeEventListener('click', onClick);
       document.removeEventListener('pointerdown', onOutside);
+      trigger.removeAttribute('commandfor');
+      trigger.removeAttribute('command');
+      layer.destroy();
     },
   };
 }

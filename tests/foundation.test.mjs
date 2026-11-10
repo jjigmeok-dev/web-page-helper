@@ -81,6 +81,130 @@ test('disclosure: disabled trigger and nested components stay independent', asyn
   });
 });
 
+test('accordion: <details> items use the platform, keeping exclusivity and keyboard', async () => {
+  await withPage(async ({ page }) => {
+    await run(page, () => {
+      const { mount } = window.hf;
+      const { el, controller } = mount(
+        'accordion',
+        `<div data-hf="accordion" data-hf-options='{"type":"single"}'>
+           <details data-hf-part="item"><summary data-hf-part="trigger">A</summary><div data-hf-part="panel">a</div></details>
+           <details data-hf-part="item"><summary data-hf-part="trigger">B</summary><div data-hf-part="panel">b</div></details>
+         </div>`,
+      );
+      window.__acc = { el, controller };
+    });
+    assert.equal(await run(page, () => window.__acc.controller.isNative), true);
+    // `name` is what lets the browser enforce single-open itself.
+    const names = await run(page, () =>
+      [...window.__acc.el.querySelectorAll('details')].map((d) => d.getAttribute('name')),
+    );
+    assert.equal(names[0] !== null && names[0] === names[1], true, 'items share a group name');
+
+    const triggers = page.locator('[data-hf-part="trigger"]');
+    await triggers.nth(0).click();
+    await page.waitForTimeout(80);
+    assert.deepEqual(await run(page, () => window.__acc.controller.openIndexes), [0]);
+
+    // Opening the sibling must close the first one, natively.
+    await triggers.nth(1).click();
+    await page.waitForTimeout(120);
+    const afterSecond = await run(page, () => ({
+      indexes: window.__acc.controller.openIndexes,
+      openFlags: [...window.__acc.el.querySelectorAll('details')].map((d) => d.open),
+    }));
+    assert.deepEqual(afterSecond.indexes, [1], 'single-open');
+    assert.deepEqual(afterSecond.openFlags, [false, true], 'the DOM agrees with the controller');
+
+    // Keyboard activation is the platform's, so it must work without a handler.
+    await page.focus('[data-hf-part="trigger"] >> nth=0');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(100);
+    assert.equal(await run(page, () => window.__acc.el.querySelectorAll('details')[0].open), true, 'Enter opens');
+  });
+});
+
+test('accordion: <details> collapsible:false refuses a user close before paint', async () => {
+  await withPage(async ({ page }) => {
+    await run(page, () => {
+      const { mount } = window.hf;
+      window.__acc = mount(
+        'accordion',
+        `<div data-hf="accordion" data-hf-options='{"type":"single","collapsible":false}'>
+           <details data-hf-part="item" open><summary data-hf-part="trigger">A</summary><div data-hf-part="panel">a</div></details>
+           <details data-hf-part="item"><summary data-hf-part="trigger">B</summary><div data-hf-part="panel">b</div></details>
+         </div>`,
+      );
+    });
+    const trigger = page.locator('[data-hf-part="trigger"]').nth(0);
+    await trigger.click();
+    await page.waitForTimeout(100);
+    const out = await run(page, () => ({
+      open: window.__acc.el.querySelectorAll('details')[0].open,
+      indexes: window.__acc.controller.openIndexes,
+    }));
+    assert.equal(out.open, true, '<details> has no cancelable toggle, so the close is reverted');
+    assert.deepEqual(out.indexes, [0]);
+
+    // Opening the sibling still closes it: exclusivity is not a veto.
+    await page.locator('[data-hf-part="trigger"]').nth(1).click();
+    await page.waitForTimeout(120);
+    assert.deepEqual(await run(page, () => window.__acc.controller.openIndexes), [1]);
+  });
+});
+
+test('accordion: single-open still holds when details-name is unsupported', async () => {
+  await withPage(async ({ page }) => {
+    // Simulate an engine without `name` on <details>: the attribute is then
+    // inert, so exclusivity has to come from the shared bookkeeping loop.
+    const out = await run(page, () => {
+      const { mount } = window.hf;
+      const proto = HTMLDetailsElement.prototype;
+      const saved = Object.getOwnPropertyDescriptor(proto, 'name');
+      delete proto.name;
+      try {
+        const { el, controller } = mount(
+          'accordion',
+          `<div data-hf="accordion" data-hf-options='{"type":"single"}'>
+             <details data-hf-part="item"><summary data-hf-part="trigger">A</summary><div data-hf-part="panel">a</div></details>
+             <details data-hf-part="item"><summary data-hf-part="trigger">B</summary><div data-hf-part="panel">b</div></details>
+           </div>`,
+        );
+        const [a, b] = el.querySelectorAll('details');
+        // Drive the platform the way a user click would, without `name`.
+        a.open = true;
+        a.dispatchEvent(new Event('toggle'));
+        b.open = true;
+        b.dispatchEvent(new Event('toggle'));
+        return { indexes: controller.openIndexes, flags: [a.open, b.open] };
+      } finally {
+        if (saved) Object.defineProperty(proto, 'name', saved);
+      }
+    });
+    assert.deepEqual(out.indexes, [1], 'the loop closes the sibling');
+    assert.deepEqual(out.flags, [false, true], 'and the DOM matches');
+  });
+});
+
+test('accordion: rejects mixing <details> with other items', async () => {
+  await withPage(async ({ page }) => {
+    await run(page, () => {
+      const { mount, assert } = window.hf;
+      assert.throws(
+        () =>
+          mount(
+            'accordion',
+            `<div data-hf="accordion">
+               <details data-hf-part="item"><summary data-hf-part="trigger">A</summary><div data-hf-part="panel">a</div></details>
+               <div data-hf-part="item"><button data-hf-part="trigger">B</button><div data-hf-part="panel">b</div></div>
+             </div>`,
+          ),
+        /cannot mix/,
+      );
+    });
+  });
+});
+
 test('tabs: arrow keys, Home/End, wrapping, focus follow and panel swap', async () => {
   await withPage(async ({ page }) => {
     await run(page, () => {
@@ -585,36 +709,165 @@ test('tooltip: focus/blur, Escape, aria-describedby, hover delay', async () => {
   });
 });
 
-test('popover: open, outside pointerdown, Escape, focus not trapped', async () => {
+test('popover: native mode owns top layer, dismissals and focus return', async () => {
   await withPage(async ({ page }) => {
+    // The declarative path only responds to trusted clicks, so this one uses
+    // a real page.click() rather than a synthetic dispatch.
     await run(page, () => {
-      const { mount, click, key, assert } = window.hf;
-      const { el, controller } = mount(
+      document.body.innerHTML = `
+        <div data-hf="popover" id="p" data-hf-options='{"defaultOpen":true}'>
+          <button data-hf-part="trigger" id="ptr">Filters</button>
+          <div data-hf-part="content" id="pc"><button id="inside">ok</button></div>
+        </div>`;
+      window.__p = window.hf.mount('popover', document.getElementById('p').outerHTML);
+    });
+
+    const state = await run(page, () => {
+      const { el, controller } = window.__p;
+      const content = el.querySelector('[data-hf-part="content"]');
+      return {
+        isNative: controller.isNative,
+        // The platform contract: no hand-written role duplication, no manual
+        // aria-modal when non-modal, and no `hidden` competing with the
+        // popover's own display:none.
+        popoverAttr: content.getAttribute('popover'),
+        hiddenAttr: content.hasAttribute('hidden'),
+        role: content.getAttribute('role'),
+        ariaModal: content.getAttribute('aria-modal'),
+        commandfor: el.querySelector('[data-hf-part="trigger"]').getAttribute('commandfor'),
+        openAfterDefault: controller.isOpen,
+        expanded: el.querySelector('[data-hf-part="trigger"]').getAttribute('aria-expanded'),
+      };
+    });
+
+    assert.equal(state.role, 'dialog', 'the panel is a dialog surface, not a modal one');
+    assert.equal(state.ariaModal, null, 'no aria-modal on a non-modal layer');
+    assert.equal(state.popoverAttr, 'auto', 'auto gives Escape and light dismiss');
+    assert.equal(state.hiddenAttr, false, 'flush behaviour must win, not [hidden]');
+    assert.equal(state.commandfor, 'pc', 'declarative invoker wiring');
+    assert.equal(state.openAfterDefault, true);
+    assert.equal(state.expanded, 'true');
+
+    // Escape is the platform's, and it returns focus to the invoker.
+    await page.click('#ptr');
+    await page.waitForTimeout(60);
+    assert.equal(await run(page, () => window.__p.controller.isOpen), false, 'trigger toggles closed');
+    await page.click('#ptr');
+    await page.waitForTimeout(60);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(120);
+    const afterEsc = await run(page, () => ({
+      open: window.__p.controller.isOpen,
+      active: document.activeElement?.id,
+    }));
+    assert.equal(afterEsc.open, false, 'Escape closes natively');
+    assert.equal(afterEsc.active, 'ptr', 'focus returns to the invoker');
+
+    // Light dismiss.
+    await page.click('#ptr');
+    await page.waitForTimeout(60);
+    await page.mouse.click(5, 5);
+    await page.waitForTimeout(150);
+    assert.equal(await run(page, () => window.__p.controller.isOpen), false, 'outside click closes natively');
+
+    // The API path must drive the platform too, and stay in sync.
+    await run(page, () => window.__p.controller.open('api'));
+    assert.equal(await run(page, () => window.__p.controller.isOpen), true);
+    assert.equal(await run(page, () => window.__p.el.querySelector('[data-hf-part="content"]').matches(':popover-open')), true);
+    await run(page, () => window.__p.controller.close('api'));
+    assert.equal(await run(page, () => window.__p.controller.isOpen), false);
+  });
+});
+
+test('popover: options that narrow the platform contract fall back to manual', async () => {
+  await withPage(async ({ page }) => {
+    const out = await run(page, () => {
+      const { mount, assert } = window.hf;
+      const results = {};
+      // A beforetoggle close is not cancelable, so refusing Escape has to be
+      // expressed as popover="manual" plus our own handler.
+      const noEsc = mount(
         'popover',
-        `<div data-hf="popover">
-           <button data-hf-part="trigger">Filters</button>
-           <div data-hf-part="content"><button id="inside">ok</button></div>
+        `<div data-hf="popover" data-hf-options='{"closeOnEscape":false}'>
+           <button data-hf-part="trigger">t</button>
+           <div data-hf-part="content">c</div>
          </div>`,
       );
-      const trigger = el.querySelector('[data-hf-part="trigger"]');
-      const content = el.querySelector('[data-hf-part="content"]');
-      assert.equal(trigger.getAttribute('aria-haspopup'), 'dialog');
-      assert.equal(trigger.getAttribute('aria-controls'), content.id);
+      results.noEscPopover = noEsc.el.querySelector('[data-hf-part="content"]').getAttribute('popover');
 
-      click(trigger);
-      assert.equal(controller.isOpen, true);
-      assert.equal(trigger.getAttribute('aria-expanded'), 'true');
-      assert.equal(content.hidden, false);
+      const noOutside = mount(
+        'popover',
+        `<div data-hf="popover" data-hf-options='{"closeOnOutside":false}'>
+           <button data-hf-part="trigger">t</button>
+           <div data-hf-part="content">c</div>
+         </div>`,
+      );
+      results.noOutsidePopover = noOutside.el.querySelector('[data-hf-part="content"]').getAttribute('popover');
 
-      const outside = document.createElement('div');
-      document.body.append(outside);
-      outside.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-      assert.equal(controller.isOpen, false);
-
-      click(trigger);
-      key(content, 'Escape');
-      assert.equal(controller.isOpen, false);
+      // Modal keeps the focus trap; the Popover API has no equivalent.
+      const modal = mount(
+        'popover',
+        `<div data-hf="popover" data-hf-options='{"modal":true}'>
+           <button data-hf-part="trigger">t</button>
+           <div data-hf-part="content"><button>x</button></div>
+         </div>`,
+      );
+      results.modalPopover = modal.el.querySelector('[data-hf-part="content"]').getAttribute('popover');
+      results.modalAria = modal.el.querySelector('[data-hf-part="content"]').getAttribute('aria-modal');
+      return results;
     });
+    assert.equal(out.noEscPopover, 'manual');
+    assert.equal(out.noOutsidePopover, 'manual');
+    assert.equal(out.modalPopover, 'manual');
+    assert.equal(out.modalAria, 'true');
+  });
+});
+
+test('popover: falls back to in-flow behaviour without the Popover API', async () => {
+  await withPage(async ({ page }) => {
+    // Simulate an engine without `popover`. This is the path real old browsers
+    // take, so it has to keep working rather than degrade silently.
+    const out = await run(page, () => {
+      const { mount, click, key, assert } = window.hf;
+      const proto = HTMLElement.prototype;
+      const saved = Object.getOwnPropertyDescriptor(proto, 'popover');
+      delete proto.popover;
+      try {
+        const { el, controller } = mount(
+          'popover',
+          `<div data-hf="popover">
+             <button data-hf-part="trigger">t</button>
+             <div data-hf-part="content"><button>c</button></div>
+           </div>`,
+        );
+        const trigger = el.querySelector('[data-hf-part="trigger"]');
+        const content = el.querySelector('[data-hf-part="content"]');
+        const result = { isNative: controller.isNative, startsHidden: content.hidden };
+        click(trigger);
+        result.opened = controller.isOpen;
+        result.unhidden = content.hidden === false;
+        result.expanded = trigger.getAttribute('aria-expanded');
+
+        const outside = document.createElement('div');
+        document.body.append(outside);
+        outside.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        result.closedOutside = controller.isOpen === false;
+
+        click(trigger);
+        key(content, 'Escape');
+        result.closedEscape = controller.isOpen === false;
+        return result;
+      } finally {
+        if (saved) Object.defineProperty(proto, 'popover', saved);
+      }
+    });
+    assert.equal(out.isNative, false, 'fallback chosen when popover is missing');
+    assert.equal(out.startsHidden, true, 'fallback needs [hidden] to take it out of flow');
+    assert.equal(out.opened, true);
+    assert.equal(out.unhidden, true);
+    assert.equal(out.expanded, 'true');
+    assert.equal(out.closedOutside, true);
+    assert.equal(out.closedEscape, true);
   });
 });
 

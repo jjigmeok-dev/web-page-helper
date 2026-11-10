@@ -60,6 +60,17 @@ html[data-hf-scroll-lock] {
 }
 
 /*
+ * A closed popover likewise has to stay out of the layer. `[popover]` styling
+ * usually supplies the panel's own `display` (a menu list wants
+ * `display: grid`), which would otherwise paint it while closed and let it
+ * swallow pointer events; the UA rule that hides it has zero specificity, so
+ * `!important` is needed to win.
+ */
+[popover]:not(:popover-open) {
+  display: none !important;
+}
+
+/*
  * Foundations expose state through data attributes so consumers can style
  * them without the foundation knowing anything about CSS:
  *   [data-state="open"] / [data-state="closed"]

@@ -433,6 +433,28 @@ function textInput(value, onCommit, attrs = {}) {
   return input;
 }
 
+/**
+ * A CSS value field.
+ *
+ * Single-line inputs clip long values (`clamp(1.9rem, 4vw, 2.8rem)` measured
+ * 155px of text in a 152px box) and there is no scrollbar to hint at the rest.
+ * A textarea wraps instead, and `field-sizing: content` keeps it one line tall
+ * until the value actually wraps. `Enter` still commits, so it behaves like the
+ * input it replaces.
+ */
+function valueInput(value, onCommit, attrs = {}) {
+  const area = el('textarea', { rows: '1', ...attrs });
+  area.value = value ?? '';
+  area.addEventListener('change', () => onCommit(area.value));
+  area.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    // A newline is never valid in a declaration value; commit instead.
+    event.preventDefault();
+    area.blur();
+  });
+  return area;
+}
+
 function numberInput(value, onCommit, attrs = {}) {
   const input = el('input', { type: 'text', value: value ?? '', inputmode: 'decimal', ...attrs });
   input.addEventListener('change', () => onCommit(input.value));
@@ -1045,7 +1067,7 @@ function renderAppearancePanel() {
     if (prop.kind === 'color') input = colorInput(value, (next) => apply(prop.property, next));
     else if (prop.kind === 'select') {
       input = selectInput(value, prop.options.map((option) => ({ value: option, label: option || '—' })), (next) => apply(prop.property, next));
-    } else input = textInput(value, (next) => apply(prop.property, next), { placeholder: prop.placeholder ?? '' });
+    } else input = valueInput(value, (next) => apply(prop.property, next), { placeholder: prop.placeholder ?? '' });
 
     const tokenButton = prop.token && !value
       ? el('button', {

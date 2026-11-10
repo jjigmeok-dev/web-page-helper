@@ -78,19 +78,28 @@
   border-block-end: 1px solid var(--hf-border);
 }
 
+/* The trigger is a <summary>, so its own marker and cursor are replaced. */
 .demo-accordion [data-hf-part='trigger'] {
-  width: 100%;
   display: flex;
   justify-content: space-between;
   text-align: start;
   border: 0;
   padding: 0.6rem 0;
+  cursor: pointer;
+  list-style: none;
 }
 
+.demo-accordion [data-hf-part='trigger']::-webkit-details-marker {
+  display: none;
+}
+
+/* `<details>` exposes the state as the `open` attribute on its parent, not
+   as `aria-expanded` on the summary. Consumer CSS can use either. */
 .demo-accordion [data-hf-part='trigger']::after {
   content: '+';
 }
 
+.demo-accordion [data-hf-part='item'][open] [data-hf-part='trigger']::after,
 .demo-accordion [data-hf-part='trigger'][aria-expanded='true']::after {
   content: '−';
 }
@@ -129,12 +138,22 @@
   display: inline-block;
 }
 
+.demo-menu [data-hf-part='trigger'] {
+  anchor-name: --demo-menu;
+}
+
+/* Promoted to the top layer, so it is anchored rather than absolutely
+   positioned: inside a scrolling card the in-flow list was clipped to
+   a few pixels. */
 .demo-menu [data-hf-part='list'] {
-  position: absolute;
-  inset-inline-start: 0;
-  inset-block-start: calc(100% + 0.35rem);
+  position: fixed;
+  margin: 0.35rem 0 0;
+  inset: auto;
   min-width: 11rem;
   display: grid;
+  position-anchor: --demo-menu;
+  position-area: bottom span-right;
+  position-try-fallbacks: flip-block;
   padding: 0.3rem;
   border: 1px solid var(--hf-border);
   border-radius: 0.6rem;
@@ -221,22 +240,34 @@
 }
 
 /* popover */
+/* popover */
+/* The panel is promoted to the top layer, where `position: absolute` no longer
+   resolves against this ancestor, so it is positioned with anchor positioning
+   instead. The anchor must be named explicitly: the implicit one only applies
+   when the invoker opened it, and `controller.open()` is also supported. */
 .demo-popover {
   position: relative;
   display: inline-block;
 }
 
+.demo-popover [data-hf-part='trigger'] {
+  anchor-name: --demo-popover;
+}
+
 .demo-popover [data-hf-part='content'] {
-  position: absolute;
-  inset-block-start: calc(100% + 0.35rem);
-  inset-inline-start: 0;
+  position: fixed;
+  margin: 0.35rem 0 0;
+  inset: auto;
   width: 15rem;
   padding: 0.85rem;
   border: 1px solid var(--hf-border);
   border-radius: 0.6rem;
   background: var(--hf-surface);
   box-shadow: 0 12px 32px rgb(0 0 0 / 0.12);
-  z-index: 10;
+  /* Placement, then a flip when there is no room below. */
+  position-anchor: --demo-popover;
+  position-area: bottom span-right;
+  position-try-fallbacks: flip-block;
 }
 
 /* listbox */

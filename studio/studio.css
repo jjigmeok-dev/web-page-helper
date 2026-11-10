@@ -180,8 +180,23 @@ body {
 
 .field textarea {
   font-family: var(--mono);
-  resize: vertical;
-  min-height: 4.5rem;
+  /* One line until the value wraps; `field-sizing` grows it from here. */
+  min-height: 1.9rem;
+  line-height: 1.35;
+  resize: none;
+  overflow: hidden;
+}
+
+/*
+ * `field-sizing: content` sizes the box to the value, so a long declaration
+ * stays fully visible instead of clipping. Browsers without it ignore the
+ * declaration: the textarea keeps `rows="1"` and scrolls, which is no worse
+ * than the single-line input it replaced.
+ */
+@supports (field-sizing: content) {
+  .field textarea {
+    field-sizing: content;
+  }
 }
 
 .field input:focus-visible,
