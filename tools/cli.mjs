@@ -753,6 +753,9 @@ async function main() {
   hf projects remove <name>      forget a project
   hf validate                    enforce headless rules
 
+  hf-quickstart                  same as \`hf studio --host 0.0.0.0\` on a free port
+  ./tools/cli.mjs <command>      run it without installing anything
+
 Docs: README.md · Demo: http://localhost:4173 after \`hf serve\`
 `);
     return;

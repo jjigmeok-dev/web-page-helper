@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * `npm run quickstart` — open the studio on the IPv4 network in one step.
+ * `./tools/quickstart.mjs` (or `hf-quickstart`) — open the studio on the IPv4
+ * network in one step.
  *
  * The studio already knows how to bind (`hf studio --host`), mint a token for
  * a non-loopback bind, and print every reachable URL. This script only removes
@@ -10,7 +11,7 @@
  *   - re-typing the flag dance and then hunting for the token in the output.
  *
  * It never starts its own HTTP server: it picks a free port, then hands off to
- * `hf studio --host 0.0.0.0`. The CLI stays the single place that decides how
+ * `tools/cli.mjs studio --host 0.0.0.0`. The CLI stays the single place that decides how
  * a network bind is secured, so the two can never drift.
  */
 import { spawn } from 'node:child_process';
@@ -85,10 +86,13 @@ function parseArgs(argv) {
 const HELP = `
 quickstart — studio on the IPv4 network, one command
 
-  npm run quickstart                 this directory, first free port from 4174
-  npm run quickstart -- ~/my-site    another project
-  npm run quickstart -- --port 5000  a specific port
-  npm run quickstart -- --proxy http://127.0.0.1:8000
+  ./tools/quickstart.mjs                 this directory, first free port from 4174
+  ./tools/quickstart.mjs ~/my-site       another project
+  ./tools/quickstart.mjs --port 5000     a specific port
+  ./tools/quickstart.mjs --proxy http://127.0.0.1:8000
+
+  hf-quickstart                          same thing after \`npm link\`
+  npm run quickstart                     same thing through npm (no npm needed)
 
 Binds 0.0.0.0, so the studio answers on every IPv4 interface and a phone on
 the same network can open it. Any non-loopback bind requires a token; the CLI

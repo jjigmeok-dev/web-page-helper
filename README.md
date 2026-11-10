@@ -6,47 +6,52 @@
 
 ### 1. 설치
 
-Node.js 22 이상. 내장 모듈(`node:http`, `node:test`, `node:fs`)만 쓰고, 검증은 22.23.2에서 했다.
-빌드 도구·번들러는 설치하지 않는다.
+Node.js 22 이상이면 된다. **런타임 의존성은 0개다** — 내장 모듈(`node:http`, `node:test`, `node:fs`)만 쓴다.
+검증은 22.23.2에서 했다.
 
 ```bash
 git clone https://github.com/jjigmeok-dev/web-page-helper
 cd web-page-helper
-npm ci
 ```
+
+이걸로 끝이다. `npm ci`는 **테스트를 돌릴 때만** 필요하다(`linkedom`, `playwright-core`). 설치하지 않아도 에디터·CLI·데모 서버는 전부 동작한다.
 
 ### 2. 에디터 열기
 
-로컬에서만 쓰려면:
-
 ```bash
-npm run studio
+./tools/cli.mjs studio
 ```
 
-→ <http://127.0.0.1:4174/__studio>. 끝이다. 오른쪽 패널에서 요소를 골라 고치고 `Save`를 누르면 디스크의 HTML/CSS가 바뀐다.
+→ <http://127.0.0.1:4174/__studio>. 오른쪽 패널에서 요소를 골라 고치고 `Save`를 누르면 디스크의 HTML/CSS가 바뀐다.
+
+`hf`를 PATH에 두고 쓰려면 (선택):
+
+```bash
+npm link          # 이후 어디서든 `hf studio`
+```
 
 **IPv4 네트워크로 바로 열기** — 폰이나 다른 PC에서 접속할 때:
 
 ```bash
-npm run quickstart
+./tools/quickstart.mjs
 ```
 
 빈 포트(4174부터)를 찾아 `0.0.0.0`에 바인딩하고, 접속 가능한 IPv4 주소와 토큰이 붙은 URL을 그대로 출력한다.
 포트·프로젝트를 지정할 수도 있다:
 
 ```bash
-npm run quickstart -- ~/work/my-site        # 다른 프로젝트
-npm run quickstart -- --port 5000            # 포트 고정
-npm run quickstart -- --proxy http://127.0.0.1:8000
+./tools/quickstart.mjs ~/work/my-site        # 다른 프로젝트
+./tools/quickstart.mjs --port 5000            # 포트 고정
+./tools/quickstart.mjs --proxy http://127.0.0.1:8000
 ```
 
 루프백이 아닌 바인딩은 토큰이 필수이므로, 출력되는 `lan` 주소 중 하나를 그대로 열면 된다.
-포트를 직접 고르려면 `npm run studio -- --port 5000`, 다른 프로젝트를 열려면 상단 `Open…`.
+다른 프로젝트를 열려면 상단 `Open…`.
 
 ### 3. 데모 서버로 페이지 보기
 
 ```bash
-npm run dev
+./tools/cli.mjs serve
 ```
 
 → <http://127.0.0.1:4173>. 파일을 고치고 새로고침하면 반영된다. watcher도 빌드 단계도 없다.
@@ -56,16 +61,16 @@ npm run dev
 파운데이션(동작·ARIA)을 유저 컴포넌트(마크업·CSS)로 조립한다.
 
 ```bash
-npm run hf -- new foundation my-widget   # foundation/my-widget.js + index.js 등록
-npm run hf -- new component promo-card   # components/promo-card/{js,css}
-npm run hf -- new page about             # pages/about.html
+./tools/cli.mjs new foundation my-widget   # foundation/my-widget.js + index.js 등록
+./tools/cli.mjs new component promo-card   # components/promo-card/{js,css}
+./tools/cli.mjs new page about             # pages/about.html
 ```
 
 만든 뒤 계약을 검사하고 목록을 확인한다.
 
 ```bash
-npm run hf -- validate   # 클래스/인라인 스타일/CSS 주입 금지 검사
-npm run hf -- list       # 파운데이션·컴포넌트·페이지 목록
+./tools/cli.mjs validate   # 클래스/인라인 스타일/CSS 주입 금지 검사
+./tools/cli.mjs list       # 파운데이션·컴포넌트·페이지 목록
 ```
 
 ### 5. 다른 프로젝트에 붙이기
@@ -73,8 +78,8 @@ npm run hf -- list       # 파운데이션·컴포넌트·페이지 목록
 이미 있는 프론트엔드를 등록하면 스택·페이지·토큰을 프로파일링하고 바로 에디터로 연다.
 
 ```bash
-npm run hf -- projects add ~/work/my-site
-npm run hf -- projects up my-site        # 프로필 출력 후 studio 실행
+./tools/cli.mjs projects add ~/work/my-site
+./tools/cli.mjs projects up my-site        # 프로필 출력 후 studio 실행
 ```
 
 프로필 출력, `--proxy` 연결, `~/.hf` 저널 위치는 [다른 프로젝트에 붙이기](#다른-프로젝트에-붙이기)에 있다.
@@ -82,20 +87,21 @@ npm run hf -- projects up my-site        # 프로필 출력 후 studio 실행
 ### 6. 테스트
 
 ```bash
-npm test
+npm ci                               # 테스트 의존성 설치 (런타임에는 불필요)
+node --test tests/*.test.mjs
 ```
 
-148개(브라우저 e2e 포함). Chromium이 없으면 e2e만 `skip`으로 표시되고 나머지는 그대로 실행된다.
+158개(브라우저 e2e 포함). Chromium이 없으면 e2e만 `skip`으로 표시되고 나머지는 그대로 실행된다.
 e2e까지 돌리려면 한 번만 설치한다:
 
 ```bash
 npx playwright install chromium
-npm test
 ```
 
 ## 명령
 
-CLI는 `npm run hf -- <명령>` 또는 `node tools/cli.mjs <명령>`으로 실행한다.
+CLI는 `./tools/cli.mjs <명령>`으로 실행한다. `npm link`(또는 `hf`를 PATH에 심볼릭 링크)하면 `hf <명령>`으로 쓸 수 있다.
+npm 스크립트(`npm run studio` 등)는 같은 명령의 별칭일 뿐이며, 저장소 밖에서도 `hf`가 동작한다.
 
 | 명령 | 용도 |
 | --- | --- |
@@ -105,7 +111,7 @@ CLI는 `npm run hf -- <명령>` 또는 `node tools/cli.mjs <명령>`으로 실�
 | `hf new page <name>` | `pages/<name>.html` 스캐폴드 |
 | `hf serve [--port 4173] [--root <dir>] [--host <addr>]` | 정적 dev 서버 (빌드·watcher 없음) |
 | `hf studio [--port 4174] [--root <dir>] [--host <addr>] [--token <v>] [--browse-root <dir>] [--proxy <url>]` | 비주얼 에디터 |
-| `npm run quickstart [-- --port N] [--proxy <url>]` | 빈 포트를 골라 `0.0.0.0`에 바인딩하고 토큰 URL까지 한 번에 출력 |
+| `hf-quickstart [--port N] [--proxy <url>]` | 빈 포트를 골라 `0.0.0.0`에 바인딩하고 토큰 URL까지 한 번에 출력 |
 | `hf projects add <dir>` | 프론트엔드를 등록하고 프로필 수집 |
 | `hf projects list` | 등록된 프로젝트 목록 |
 | `hf projects show <name>` | 프로필 전체 출력 (페이지·스타일시트·경고) |

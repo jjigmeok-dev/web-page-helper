@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -119,4 +119,17 @@ test('quickstart prints help and exits without binding', async () => {
   assert.equal(code, 0);
   assert.match(out, /npm run quickstart/);
   assert.doesNotMatch(out, /binding 0\.0\.0\.0/);
+});
+
+test('the package exposes hf and hf-quickstart as real bin entries', async () => {
+  const pkg = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8'));
+  assert.equal(pkg.bin?.hf, 'tools/cli.mjs', 'hf maps to the CLI');
+  assert.equal(pkg.bin?.['hf-quickstart'], 'tools/quickstart.mjs', 'hf-quickstart maps to the script');
+  // npm is optional: the scripts must run on their own, without a wrapper.
+  for (const file of ['tools/cli.mjs', 'tools/quickstart.mjs']) {
+    const source = await readFile(join(ROOT, file), 'utf8');
+    assert.match(source, /^#!\/usr\/bin\/env node/, `${file} has a node shebang`);
+    const mode = (await stat(join(ROOT, file))).mode;
+    assert.ok(mode & 0o111, `${file} is executable, so ./${file} works without npm`);
+  }
 });
