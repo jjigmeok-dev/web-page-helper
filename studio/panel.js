@@ -268,7 +268,12 @@ function postToBridge(message) {
 function loadPreview() {
   const page = state.page;
   if (!page) return;
-  const url = `${page.url}?hf=${Date.now()}`;
+  // The preview document is regenerated (instrumentation + preloads) on every
+  // request, so it must never be reused from cache. Keying the URL by the
+  // page's content hash keeps that guarantee while letting identical reloads
+  // hit the cache instead of re-downloading the document.
+  const version = (page.version ?? '').replace(/^sha256:/, '').slice(0, 12);
+  const url = version ? `${page.url}?hf=${version}` : page.url;
   ui.previewUrl.textContent = page.url;
   ui.preview.src = url;
 }
@@ -1603,8 +1608,24 @@ async function undoLast() {
 
 /* ------------------------------------------------------------ page load */
 
+/**
+ * The shell is served with the project inventory already inlined (the server
+ * has it in hand while rendering the route). Reading it from the document
+ * removes one full round trip from every cold start, which on a 400 ms link
+ * is a third of the time to the first rendered tree.
+ */
+function inlineBoot() {
+  const node = document.getElementById('hf-boot');
+  if (!node) return null;
+  try {
+    return JSON.parse(node.textContent);
+  } catch {
+    return null;
+  }
+}
+
 async function loadProject() {
-  const project = await api('project');
+  const project = inlineBoot() ?? (await api('project'));
   state.project = project;
   // The profile is a second, slower scan (every page and stylesheet is
   // re-read). Load the editor first, then fill the Project tab when it lands.
@@ -2046,6 +2067,9 @@ ui.pickerOpen.addEventListener('click', () => {
       saved = null;
     }
     const first = state.project.pages.find((page) => page.file === saved?.file) ?? state.project.pages[0];
+    // `history` shares no state with loadPage, so start it now instead of
+    // queueing a third round trip behind the page model.
+    const historyReady = api('history').catch(() => null);
     if (first) {
       ui.pageSelect.value = first.file;
       await loadPage(first.file, { keepSelection: false });
@@ -2053,8 +2077,8 @@ ui.pickerOpen.addEventListener('click', () => {
         select(saved.id, { fromTree: true });
       }
     }
-    const history = await api('history');
-    ui.undo.disabled = history.snapshots.length === 0;
+    const history = await historyReady;
+    ui.undo.disabled = !history || history.snapshots.length === 0;
   } catch (error) {
     reportError(error);
     setStatus(`Failed to start studio: ${error.message}`, 'error');

@@ -16,7 +16,8 @@ import { readFile, stat } from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { homedir, networkInterfaces } from 'node:os';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { scanHtml } from '../scan/html.mjs';
 import { createApi } from './api.mjs';
@@ -42,10 +43,105 @@ const MIME = {
   '.map': 'application/json; charset=utf-8',
 };
 
+// A module script is deferred: putting it in <head> lets the browser start the
+// fetch immediately instead of discovering it after the last body element,
+// which on a slow link moved it to the end of the preview's request queue.
 const BRIDGE_TAG = '<script type="module" src="/__studio/bridge.js"></script>';
 
-/** Adds `data-hf-node` to every element open tag, using exact source offsets. */
-export function instrumentHtml(source) {
+/**
+ * A module graph costs one round trip per depth level, and the preview graph
+ * is four deep: page -> runtime -> foundation/index -> the twelve foundations.
+ * On a 400 ms link that is 1.6 s of pure waiting before the first component
+ * mounts. `modulepreload` names the whole graph up front so the browser
+ * fetches it in one wave.
+ *
+ * Resolution is textual on purpose: the preview only loads local module
+ * files, and a full parser would cost more than the round trips it saves.
+ * Results are cached per file version, so a page render is not paying for
+ * a graph walk every time.
+ */
+const MODULE_PRELOAD_LIMIT = 40;
+const preloadCache = new Map();
+
+function stripComments(code) {
+  return code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
+/** Static `import ... from '...'` and `import '...'` specifiers. */
+function staticImports(code) {
+  const found = [];
+  const pattern = /(?:^|[\s;}])(?:import|export)\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]/g;
+  let match;
+  while ((match = pattern.exec(code)) !== null) found.push(match[1]);
+  return found;
+}
+
+/** Only same-origin relative modules inside the project are followed. */
+function resolveModule(fromPath, specifier) {
+  if (!specifier.startsWith('.') && !specifier.startsWith('/')) return null;
+  const base = fromPath.split('/').slice(0, -1).join('/') || '/';
+  const joined = specifier.startsWith('/') ? specifier : `${base}/${specifier}`;
+  const parts = [];
+  for (const piece of joined.split('/')) {
+    if (!piece || piece === '.') continue;
+    if (piece === '..') parts.pop();
+    else parts.push(piece);
+  }
+  return `/${parts.join('/')}`;
+}
+
+/**
+ * Walks the module graph reachable from `entry` entries and returns the
+ * modules worth preloading (everything except the entries themselves, which
+ * the browser already knows about).
+ */
+async function collectModules(root, entries, read) {
+  const seen = new Set();
+  const queue = [];
+  for (const entry of entries) {
+    const path = resolveModule('/page.html', entry);
+    if (path && !seen.has(path)) {
+      seen.add(path);
+      queue.push(path);
+    }
+  }
+  const modules = [];
+  const styles = [];
+  while (queue.length && modules.length < MODULE_PRELOAD_LIMIT) {
+    const path = queue.shift();
+    let text;
+    try {
+      text = await read(root, path);
+    } catch {
+      continue;
+    }
+    if (text === null) continue;
+    modules.push(path);
+    const code = stripComments(text);
+    // A component's `styles:` file is a stylesheet, not a module, so it needs
+    // `rel=preload as=style` rather than `modulepreload`.
+    for (const href of styleHints(code)) {
+      const next = resolveModule(path, href);
+      if (next && !seen.has(next)) {
+        seen.add(next);
+        styles.push(next);
+      }
+    }
+    for (const specifier of staticImports(code)) {
+      const next = resolveModule(path, specifier);
+      if (!next || seen.has(next)) continue;
+      seen.add(next);
+      queue.push(next);
+    }
+  }
+  return { modules, styles };
+}
+
+/**
+ * Adds `data-hf-node` to every element open tag, using exact source offsets.
+ * `preloads` are module paths injected as `rel="modulepreload"` into `<head>`.
+ */
+export function instrumentHtml(source, { preloads = [], styles = [] } = {}) {
   const tree = scanHtml(source);
   if (tree.problems.length) return { html: source, instrumented: false, problems: tree.problems };
   const edits = [];
@@ -69,13 +165,81 @@ export function instrumentHtml(source) {
   let out = source;
   for (const edit of edits) out = out.slice(0, edit.start) + edit.text + out.slice(edit.end);
 
-  const closeBody = out.lastIndexOf('</body>');
-  if (closeBody !== -1) out = `${out.slice(0, closeBody)}${BRIDGE_TAG}\n${out.slice(closeBody)}`;
-  else out += `\n${BRIDGE_TAG}\n`;
+  if (preloads.length || styles.length) {
+    const tags = [
+      ...preloads.map((href) => `<link rel="modulepreload" href="${href}">`),
+      ...styles.map((href) => `<link rel="preload" as="style" href="${href}">`),
+    ].join('');
+    const closeHead = out.lastIndexOf('</head>');
+    if (closeHead !== -1) out = `${out.slice(0, closeHead)}${tags}\n${out.slice(closeHead)}`;
+    else out = `${tags}\n${out}`;
+  }
+
+  const closeHead = out.lastIndexOf('</head>');
+  if (closeHead !== -1) out = `${out.slice(0, closeHead)}${BRIDGE_TAG}\n${out.slice(closeHead)}`;
+  else {
+    const closeBody = out.lastIndexOf('</body>');
+    if (closeBody !== -1) out = `${out.slice(0, closeBody)}${BRIDGE_TAG}\n${out.slice(closeBody)}`;
+    else out += `\n${BRIDGE_TAG}\n`;
+  }
   return { html: out, instrumented: true, problems: [] };
 }
 
 
+
+/**
+ * Module specifiers the page itself loads: `<script type="module" src>` and
+ * inline module imports. Only the first level is read here; the walker
+ * expands the rest.
+ */
+function moduleEntries(html) {
+  const entries = [];
+  const tagPattern = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+  let match;
+  while ((match = tagPattern.exec(html)) !== null) {
+    const attrs = match[1];
+    if (!/type\s*=\s*['"]module['"]/i.test(attrs)) continue;
+    const src = attrs.match(/src\s*=\s*['"]([^'"]+)['"]/i);
+    if (src) {
+      entries.push(src[1]);
+      continue;
+    }
+    for (const specifier of staticImports(stripComments(match[2]))) {
+      entries.push(specifier);
+    }
+  }
+  return entries;
+}
+
+/** `styles: './x.css'` in a component definition is fetched at runtime, long
+ * after the module graph is parsed. Naming it up front makes it part of the
+ * same wave. */
+function styleHints(code) {
+  const found = [];
+  const pattern = /styles\s*:\s*['"]([^'"]+\.css)['"]/g;
+  let match;
+  while ((match = pattern.exec(code)) !== null) found.push(match[1]);
+  return found;
+}
+
+/** Caches the walk per (root, page version): a save changes `version`. */
+async function preloadsFor(root, entries, version) {
+  if (!entries.length) return { modules: [], styles: [] };
+  const key = `${root}\0${version}\0${entries.join(',')}`;
+  const cached = preloadCache.get(key);
+  if (cached) return cached;
+  const read = async (projectRoot, path) => {
+    try {
+      return (await readSource(projectRoot, path.slice(1))).text;
+    } catch {
+      return null;
+    }
+  };
+  const preloads = await collectModules(root, entries, read);
+  if (preloadCache.size > 64) preloadCache.clear();
+  preloadCache.set(key, preloads);
+  return preloads;
+}
 
 /**
  * The folder picker's reachable roots.
@@ -170,14 +334,90 @@ export function resolveToken(host, requested) {
   return randomBytes(16).toString('hex');
 }
 
-function json(res, status, body) {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(payload),
-    'Cache-Control': 'no-store',
+/**
+ * Transport for every response the studio generates.
+ *
+ * Two things dominated load time before this existed:
+ * - nothing was compressed, so `/__api/page` (174 KiB) crossed the wire whole
+ * - everything carried `no-store`, so a reload re-downloaded all of it
+ *
+ * Brotli at quality 5 costs ~0.9 ms on the largest payload and lands within
+ * 13% of quality 11 (which costs 90 ms), so it is the default for text.
+ */
+const COMPRESSIBLE = /^(text\/|application\/(json|javascript)|image\/svg)/;
+const MIN_COMPRESS = 1024;
+
+/** Cheap validator: a body hash. The API responses are deterministic. */
+function etagOf(buffer) {
+  return `"${createHash('sha1').update(buffer).digest('base64url').slice(0, 20)}"`;
+}
+
+function acceptsEncoding(header, encoding) {
+  if (!header) return false;
+  return header.split(',').some((part) => {
+    const [name, ...params] = part.trim().split(';');
+    if (name !== encoding && name !== '*') return false;
+    const q = params.find((p) => p.trim().startsWith('q='));
+    return !q || Number(q.split('=')[1]) > 0;
   });
-  res.end(payload);
+}
+
+/**
+ * Sends `body` with compression, a validator and a cache policy.
+ *
+ * `cache: 'revalidate'` means the browser may keep the body but must confirm
+ * it with an `If-None-Match` request; `etag` is then answered with a 304 that
+ * carries no body at all. That keeps an editor honest (a save invalidates the
+ * model) without paying the download again on every reload.
+ */
+function send(req, res, status, body, { type, cache = 'revalidate', extra = {}, maxAge = 0 } = {}) {
+  let buffer = Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8');
+  const headers = { 'Content-Type': type, Vary: 'Accept-Encoding', ...extra };
+
+  if (cache === 'no-store') headers['Cache-Control'] = 'no-store';
+  else if (maxAge > 0) headers['Cache-Control'] = `private, max-age=${maxAge}, must-revalidate`;
+  else headers['Cache-Control'] = 'no-cache';
+
+  const compressible = COMPRESSIBLE.test(type) && buffer.length >= MIN_COMPRESS;
+  if (compressible) {
+    const etag = etagOf(buffer);
+    headers.ETag = etag;
+    if (req.headers['if-none-match'] === etag) {
+      delete headers['Content-Type'];
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
+    const accept = req.headers['accept-encoding'];
+    if (acceptsEncoding(accept, 'br')) {
+      buffer = brotliCompressSync(buffer, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 5 } });
+      headers['Content-Encoding'] = 'br';
+    } else if (acceptsEncoding(accept, 'gzip')) {
+      buffer = gzipSync(buffer, { level: 6 });
+      headers['Content-Encoding'] = 'gzip';
+    }
+  } else if (status === 200 && buffer.length) {
+    // Small or binary bodies still get a validator so repeat loads are 304s.
+    const etag = etagOf(buffer);
+    headers.ETag = etag;
+    if (req.headers['if-none-match'] === etag) {
+      delete headers['Content-Type'];
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
+  }
+
+  headers['Content-Length'] = buffer.length;
+  res.writeHead(status, headers);
+  res.end(buffer);
+}
+
+function json(req, res, status, body, options = {}) {
+  send(req, res, status, JSON.stringify(body), {
+    type: 'application/json; charset=utf-8',
+    ...options,
+  });
 }
 
 async function readBody(req, limit = 2 * 1024 * 1024) {
@@ -289,7 +529,7 @@ export async function startStudio({
         req.headers['x-hf-token'] ??
         cookieValue(req.headers.cookie, TOKEN_COOKIE);
       if (!tokenMatches(state.token, provided)) {
-        json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: 'a valid ?token= is required' });
+        json(req, res, 401, { ok: false, code: 'UNAUTHORIZED', message: 'a valid ?token= is required' });
         return;
       }
     }
@@ -297,16 +537,33 @@ export async function startStudio({
     try {
       // --- studio UI assets
       if (path === '/__studio' || path === '/__studio/') {
-        const body = await readFile(join(STUDIO_DIR, 'index.html'));
-        const headers = { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' };
+        let body = await readFile(join(STUDIO_DIR, 'index.html'));
+        // Inline the inventory the shell would otherwise fetch right after
+        // parsing. The scan is cheap (one directory walk) and it removes a
+        // round trip from the critical path of every cold start.
+        try {
+          const { status, body: inventory } = await api.handle('project', {});
+          if (status === 200) {
+            const boot = JSON.stringify(inventory).replace(/</g, '\\u003c');
+            body = Buffer.from(
+              String(body).replace(
+                '</head>',
+                `<script type="application/json" id="hf-boot">${boot}</script>\n</head>`,
+              ),
+              'utf8',
+            );
+          }
+        } catch {
+          // Falls back to the JSON API: the shell still boots.
+        }
+        const extra = {};
         // The shell is loaded with ?token=..., but its own script, stylesheet
         // and preview iframe cannot carry a query. Hand them a cookie once the
         // URL proved the token, so the editor is usable over a LAN bind.
         if (state.token && url.searchParams.get('token')) {
-          headers['Set-Cookie'] = `${TOKEN_COOKIE}=${encodeURIComponent(state.token)}; Path=/; SameSite=Strict; HttpOnly`;
+          extra['Set-Cookie'] = `${TOKEN_COOKIE}=${encodeURIComponent(state.token)}; Path=/; SameSite=Strict; HttpOnly`;
         }
-        res.writeHead(200, headers);
-        res.end(body);
+        send(req, res, 200, body, { type: MIME['.html'], extra });
         return;
       }
       if (path.startsWith('/__studio/')) {
@@ -317,11 +574,14 @@ export async function startStudio({
         }
         try {
           const body = await readFile(file);
-          res.writeHead(200, {
-            'Content-Type': MIME[extname(file)] ?? 'application/octet-stream',
-            'Cache-Control': 'no-store',
+          // Studio assets change only when the tool itself is edited, and the
+          // ETag proves it. A short private max-age skips even the
+          // revalidation round trip on a reload while still picking up a local
+          // edit within a minute.
+          send(req, res, 200, body, {
+            type: MIME[extname(file)] ?? 'application/octet-stream',
+            maxAge: 60,
           });
-          res.end(body);
         } catch {
           res.writeHead(404).end('not found');
         }
@@ -336,13 +596,13 @@ export async function startStudio({
           // The token is a transport concern, not an argument.
           delete query.token;
           const { status, body } = await api.handle(action, { query });
-          json(res, status, body);
+          json(req, res, status, body);
           return;
         }
         if (req.method === 'POST') {
           const body = await readBody(req);
           const { status, body: result } = await api.handle(action, { body });
-          json(res, status, result);
+          json(req, res, status, result);
           return;
         }
         res.writeHead(405).end();
@@ -368,30 +628,25 @@ export async function startStudio({
         res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end(`404 ${path}`);
         return;
       }
+      // Project files are re-read from disk on every request, so the ETag
+      // follows the file: an edited file gets a new hash and a 200, an
+      // untouched one gets a body-less 304.
       if (rel.endsWith('.html')) {
-        const preview = instrumentHtml(source.text);
-        const body = Buffer.from(preview.html, 'utf8');
-        res.writeHead(200, {
-          'Content-Type': MIME['.html'],
-          'Content-Length': body.length,
-          'Cache-Control': 'no-store',
-        });
-        res.end(body);
+        const entries = moduleEntries(source.text);
+        const { modules, styles } = await preloadsFor(state.root, entries, source.version);
+        const preview = instrumentHtml(source.text, { preloads: modules, styles });
+        send(req, res, 200, preview.html, { type: MIME['.html'] });
         return;
       }
-      const body = Buffer.from(source.text, 'utf8');
-      res.writeHead(200, {
-        'Content-Type': MIME[extname(rel)] ?? 'application/octet-stream',
-        'Content-Length': body.length,
-        'Cache-Control': 'no-store',
+      send(req, res, 200, source.text, {
+        type: MIME[extname(rel)] ?? 'application/octet-stream',
       });
-      res.end(body);
     } catch (error) {
       if (error instanceof StudioError) {
-        json(res, 400, { ok: false, code: error.code, message: error.message });
+        json(req, res, 400, { ok: false, code: error.code, message: error.message });
         return;
       }
-      json(res, 500, { ok: false, code: 'INTERNAL', message: String(error?.message ?? error) });
+      json(req, res, 500, { ok: false, code: 'INTERNAL', message: String(error?.message ?? error) });
     }
   });
 

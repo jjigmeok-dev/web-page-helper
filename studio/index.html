@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>web-page-helper studio</title>
     <link rel="stylesheet" href="/__studio/studio.css" />
+    <!-- panel.js imports these two; naming them here turns three serial waves
+         (panel -> ops/suggest) into one request wave on a high-latency link. -->
+    <link rel="modulepreload" href="/__studio/ops.js" />
+    <link rel="modulepreload" href="/__studio/suggest.js" />
   </head>
   <body>
     <div class="shell">

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApi } from '../tools/studio/api.mjs';
@@ -370,6 +370,108 @@ test('cli: `studio` targets the current directory by default', async () => {
     });
     assert.equal(line, root, 'the studio must edit the directory it was started in');
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('server: text responses are compressed and validated, so a reload is cheap', async () => {
+  const { startStudio } = await import('../tools/studio/server.mjs');
+  const root = await project();
+  const studio = await startStudio({ root, port: 0, quiet: true });
+  const base = `http://${studio.host}:${studio.port}`;
+  try {
+    const page = await fetch(`${base}/__api/page?file=index.html`, {
+      headers: { 'Accept-Encoding': 'br' },
+    });
+    assert.equal(page.status, 200);
+    assert.equal(page.headers.get('content-encoding'), 'br', 'large JSON must not cross the wire whole');
+    const etag = page.headers.get('etag');
+    assert.ok(etag, 'a deterministic response needs a validator');
+    assert.match(page.headers.get('cache-control'), /no-cache/, 'the model may be stale after a save');
+    await page.arrayBuffer();
+
+    const revalidated = await fetch(`${base}/__api/page?file=index.html`, {
+      headers: { 'Accept-Encoding': 'br', 'If-None-Match': etag },
+    });
+    assert.equal(revalidated.status, 304, 'an unchanged response must not be re-sent');
+    assert.equal((await revalidated.arrayBuffer()).byteLength, 0);
+
+    // A client that advertises nothing must still get a usable body. Node's
+    // fetch adds `Accept-Encoding: gzip` on its own, so opt out explicitly.
+    const identity = await fetch(`${base}/__api/page?file=index.html`, {
+      headers: { 'Accept-Encoding': 'identity' },
+    });
+    assert.equal(identity.headers.get('content-encoding'), null);
+    assert.equal((await identity.json()).ok, true);
+
+    const asset = await fetch(`${base}/__studio/panel.js`, { headers: { 'Accept-Encoding': 'gzip' } });
+    assert.equal(asset.headers.get('content-encoding'), 'gzip');
+    const assetEtag = asset.headers.get('etag');
+    await asset.arrayBuffer();
+    const cached = await fetch(`${base}/__studio/panel.js`, { headers: { 'If-None-Match': assetEtag } });
+    assert.equal(cached.status, 304);
+  } finally {
+    await studio.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('server: the shell inlines the project inventory and names the module graph', async () => {
+  const { startStudio } = await import('../tools/studio/server.mjs');
+  const root = await project();
+  const studio = await startStudio({ root, port: 0, quiet: true });
+  try {
+    const html = await (await fetch(`${studio.url}`)).text();
+    // The inventory is inlined so the shell does not spend a round trip
+    // before it can render the first tree.
+    const boot = html.match(/<script type="application\/json" id="hf-boot">([\s\S]*?)<\/script>/);
+    assert.ok(boot, 'the shell must carry the boot inventory');
+    const inventory = JSON.parse(boot[1]);
+    assert.equal(inventory.pages[0].file, 'index.html');
+    // `</script>` inside the payload would end the tag early.
+    assert.doesNotMatch(boot[1], /<\/script/i);
+  } finally {
+    await studio.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('instrumentHtml: preloads the preview module graph and its component styles', async () => {
+  const { instrumentHtml } = await import('../tools/studio/server.mjs');
+  const source = `<!doctype html><html><head><title>x</title></head><body><p>hi</p><script type="module" src="/runtime/index.js"></script></body></html>`;
+  const { html } = instrumentHtml(source, {
+    preloads: ['/runtime/index.js', '/foundation/core.js'],
+    styles: ['/components/card/card.css'],
+  });
+  assert.match(html, /<link rel="modulepreload" href="\/runtime\/index\.js">/);
+  assert.match(html, /<link rel="modulepreload" href="\/foundation\/core\.js">/);
+  assert.match(html, /<link rel="preload" as="style" href="\/components\/card\/card\.css">/);
+  // The bridge is a deferred module, so it belongs in <head> where the fetch
+  // starts immediately instead of at the end of the body.
+  const head = html.slice(0, html.indexOf('</head>'));
+  assert.match(head, /\/__studio\/bridge\.js/);
+});
+
+test('server: the preview page preloads the module graph it will fetch', async () => {
+  const { startStudio } = await import('../tools/studio/server.mjs');
+  const root = await project();
+  // A page whose module entry imports a second module: the walker has to
+  // follow the edge, or the browser pays a serial round trip for it.
+  await mkdir(join(root, 'runtime'), { recursive: true });
+  await writeFile(
+    join(root, 'runtime', 'index.js'),
+    `import { foundations } from '../foundation/index.js';\nexport const start = () => foundations;\n`,
+  );
+  const studio = await startStudio({ root, port: 0, quiet: true });
+  try {
+    const html = await (await fetch(`http://${studio.host}:${studio.port}/index.html`)).text();
+    const preloads = [...html.matchAll(/rel="modulepreload" href="([^"]+)"/g)].map((m) => m[1]);
+    assert.ok(preloads.includes('/runtime/index.js'), `entry missing from ${JSON.stringify(preloads)}`);
+    assert.ok(preloads.includes('/foundation/index.js'), 'a module imported by the entry was not preloaded');
+    assert.ok(preloads.includes('/foundation/core.js'), 'a transitive module was not preloaded');
+    assert.ok(!preloads.some((href) => href.endsWith('.css')), 'stylesheets need rel=preload as=style');
+  } finally {
+    await studio.close();
     await rm(root, { recursive: true, force: true });
   }
 });
