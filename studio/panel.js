@@ -60,6 +60,11 @@ const state = {
   // True once the user chooses a tab by hand for the current selection.
   tabPinned: false,
   nodeIndex: new Map(),
+  // Set while the preview shows a dry-run document (structural edits pending);
+  // the URL of that document, so it can be torn down when the set empties.
+  previewUrl: null,
+  // Scroll offset to restore across a preview reload.
+  previewScroll: 0,
   busy: false,
 };
 
@@ -169,6 +174,30 @@ function badgeFor(node) {
   return null;
 }
 
+/**
+ * A stable-enough description of a node across a re-scan: tag, sorted
+ * attributes (minus the injected `data-hf-node`) and its own text. Structural
+ * ids cannot be compared because they are positional.
+ */
+function nodeFingerprint(node) {
+  // `attrs` is a name → value object on the serialized model.
+  const attrs = Object.entries(node.attrs ?? {})
+    .filter(([name]) => name !== 'data-hf-node')
+    .map(([name, value]) => `${name}=${value ?? ''}`)
+    .sort()
+    .join('\u0000');
+  return `${node.tag}\u0001${attrs}\u0001${(node.text ?? '').trim()}`;
+}
+
+/** First node in `candidates` that looks like `node`. */
+function findByFingerprint(node, candidates) {
+  const want = nodeFingerprint(node);
+  for (const candidate of candidates) {
+    if (candidate.id !== node.id && nodeFingerprint(candidate) === want) return candidate;
+  }
+  return null;
+}
+
 function renderTree() {
   const tree = state.page.tree;
   // Rebuilt with the page: part ownership and duplicate-id checks read it.
@@ -266,6 +295,80 @@ function postToBridge(message) {
 
 /* ------------------------------------------------------------ preview */
 
+/**
+ * Ops the loaded document cannot express in place.
+ *
+ * Declarations, attributes and text map onto CSSOM/attribute writes, but a
+ * move or an insert changes the document's shape. For those the preview is
+ * reloaded from a dry-run of the pending ops, so the user sees the new layout
+ * before saving. Disk is never touched.
+ */
+const STRUCTURAL_OPS = new Set(['insertNode', 'removeNode', 'moveNode', 'wrapNode', 'duplicateNode', 'frameNode']);
+
+function hasStructuralOps() {
+  return state.pending.some((op) => STRUCTURAL_OPS.has(op.op));
+}
+
+/** Bumped per reload so an older response cannot overwrite a newer preview. */
+let previewToken = 0;
+
+async function syncStructuralPreview() {
+  const page = state.page;
+  if (!page) return;
+  const token = ++previewToken;
+  if (!hasStructuralOps()) {
+    // Back to the page as it is on disk, keeping the user where they were.
+    state.previewScroll = currentScroll();
+    loadPreview();
+    return;
+  }
+  let body;
+  try {
+    const response = await fetch('/__api/preview', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ file: page.file, ops: state.pending }),
+    });
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  // A later keystroke already superseded this render.
+  if (token !== previewToken) return;
+  if (!body?.ok || !body.url) {
+    // Keep the last good preview rather than blanking it; the status line
+    // already explains why the save would fail.
+    return;
+  }
+  state.previewScroll = currentScroll();
+  state.previewUrl = body.url;
+  // Adopt the dry-run model so the tree, ownership and selectors describe the
+  // document the preview is showing. Node ids are structural paths, so they
+  // shift when something moves; keep the selection on the moved node by
+  // remembering what it was rather than its old id.
+  if (body.model) {
+    // Node ids are structural index paths, so a move renumbers them: the old
+    // id now names a different element. Re-resolve the selection by what the
+    // node *is* (tag, attributes, text) instead of where it used to sit.
+    const previous = state.nodeIndex.get(state.selected);
+    state.page = { ...state.page, ...body.model };
+    renderTree();
+    if (previous) {
+      const match = findByFingerprint(previous, state.nodeIndex.values());
+      if (match) state.selected = match.id;
+    }
+  }
+  ui.preview.src = body.url;
+}
+
+function currentScroll() {
+  try {
+    return ui.preview.contentWindow?.scrollY ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 function loadPreview() {
   const page = state.page;
   if (!page) return;
@@ -275,6 +378,7 @@ function loadPreview() {
   // hit the cache instead of re-downloading the document.
   const version = (page.version ?? '').replace(/^sha256:/, '').slice(0, 12);
   const url = version ? `${page.url}?hf=${version}` : page.url;
+  state.previewUrl = null;
   ui.previewUrl.textContent = page.url;
   ui.preview.src = url;
 }
@@ -1715,7 +1819,18 @@ function renderPending() {
   ui.pendingList.replaceChildren(...items);
   // Mirror the pending set into the preview so edits show up immediately.
   // The file is untouched until Save.
-  postToBridge({ type: 'live', ...liveChanges() });
+  if (hasStructuralOps()) {
+    // A move/insert/delete cannot be expressed as a live write; reload the
+    // preview from a dry-run of the pending ops instead.
+    syncStructuralPreview();
+  } else {
+    if (state.previewUrl) {
+      state.previewUrl = null;
+      loadPreview();
+      return;
+    }
+    postToBridge({ type: 'live', ...liveChanges() });
+  }
 }
 
 /**
@@ -2055,6 +2170,12 @@ window.addEventListener('message', (event) => {
     // still reflects edits that have not been saved yet.
     postToBridge({ type: 'live', ...liveChanges() });
     if (state.selected) postToBridge({ type: 'select', id: state.selected });
+    // A structural edit reloads the document; put the user back where they
+    // were looking instead of jumping to the top on every drop.
+    if (state.previewScroll) {
+      postToBridge({ type: 'scroll-to', y: state.previewScroll });
+      state.previewScroll = 0;
+    }
   }
 });
 

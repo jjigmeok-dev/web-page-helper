@@ -657,10 +657,17 @@ export function tokensOf(sheets) {
  *
  * @param {string} root project root
  * @param {string} pageRel page file relative to root
+ * @param {{ text?: string }} [options] `text` replaces the on-disk body
+ *   (dry-run preview); the version still describes disk.
  */
-export async function buildPageModel(root, pageRel) {
+export async function buildPageModel(root, pageRel, { text: override = null } = {}) {
   const project = await discover(root);
   const page = await readSource(root, pageRel);
+  // `override` is a dry-run body (pending structural ops already applied): the
+  // tree and rules must describe the document the preview is showing, not the
+  // one still on disk, or the tree and the preview disagree about where a
+  // moved element lives.
+  if (override !== null) page.text = override;
   const tree = scanHtml(page.text, { file: pageRel });
   if (tree.problems.length) {
     throw new StudioError('SCAN_PROBLEMS', 'the page has syntax the editor cannot safely rewrite', {

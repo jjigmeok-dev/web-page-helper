@@ -393,13 +393,17 @@ body {
 @media (max-width: 68rem) {
   .tabs {
     gap: 0;
+    padding-inline: 0.2rem;
   }
   .tabs [role='tab'] {
-    padding: 0.35rem 0.2rem;
+    padding: 0.35rem 0.15rem;
     font-size: 11px;
+    /* Five tabs have to share a 288px column at 1024px; the two-character
+       help icon is the only thing that can give way without hiding a label. */
+    gap: 0;
   }
   .help {
-    margin-inline-start: 0.2rem;
+    margin-inline-start: 0.1rem;
   }
 }
 

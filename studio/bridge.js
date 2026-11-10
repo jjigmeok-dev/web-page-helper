@@ -37,17 +37,37 @@
       inset: 0 auto auto 0;
     }
     .__hf-selected { outline: 2px solid #4f46e5 !important; outline-offset: -2px !important; }
-    /* Drop indicator: where the dragged element will land. */
+    /* Drop indicator: where the dragged element will land. A 2px line was
+       invisible over the page, so a sibling drop draws a 4px bar with end caps
+       and an inside drop fills the target. */
     .__hf-drop {
       position: fixed;
+      /* Without an explicit inset a fixed box keeps its static position at the
+         end of the document, so the translate below drew it far off-screen. */
+      inset: 0 auto auto 0;
       pointer-events: none;
       z-index: 2147483001;
       background: #4f46e5;
-      border-radius: 1px;
+      box-sizing: border-box;
     }
-    .__hf-drop--line { block-size: 2px; }
-    .__hf-drop--zone { background: rgb(79 70 229 / 0.18); border: 2px solid #4f46e5; border-radius: 3px; }
-    .__hf-drag { opacity: 0.4; }
+    .__hf-drop--line { block-size: 4px; border-radius: 2px; box-shadow: 0 0 0 1px rgb(255 255 255 / 0.7); }
+    .__hf-drop--line::before,
+    .__hf-drop--line::after {
+      content: '';
+      position: absolute;
+      inset-block: -3px;
+      inline-size: 4px;
+      background: #4f46e5;
+      border-radius: 2px;
+    }
+    .__hf-drop--line::before { inset-inline-start: 0; }
+    .__hf-drop--line::after { inset-inline-end: 0; }
+    .__hf-drop--zone {
+      background: rgb(79 70 229 / 0.15);
+      border: 2px dashed #4f46e5;
+      border-radius: 4px;
+    }
+    .__hf-drag { opacity: 0.35; outline: 2px dashed #4f46e5 !important; outline-offset: 1px !important; }
   `;
   document.head.append(style);
 
@@ -65,7 +85,7 @@
   // Unsaved declaration edits are applied straight to the page's CSSOM, not
   // as an appended override: removing a declaration has to actually remove it,
   // otherwise the original rule keeps winning the cascade.
-  const cssOriginals = new Map(); // CSSStyleRule -> [[property, value, priority], …]
+  const cssOriginals = new Map(); // CSSStyleRule -> cssText as the stylesheet declared it
   const liveAttrs = new Map();
   const liveTexts = new Map();
 
@@ -167,21 +187,22 @@
     return 'index.html';
   }
 
+  /**
+   * Rules are snapshotted as `cssText`, not as a list of longhands.
+   *
+   * A shorthand holding a custom property (`background: var(--hf-surface)`) is
+   * a *pending-substitution* value: the CSSOM expands it into longhands that
+   * each report an empty value. Replaying those longhands silently deleted the
+   * declaration, so editing any element blanked `body`'s background to white.
+   * `cssText` keeps the shorthand as written and round-trips verbatim.
+   */
   function snapshotRule(rule) {
-    const style = rule.style;
-    const decls = [];
-    for (let i = 0; i < style.length; i += 1) {
-      const property = style.item(i);
-      decls.push([property, style.getPropertyValue(property), style.getPropertyPriority(property)]);
-    }
-    return decls;
+    return rule.style.cssText;
   }
 
   /** Puts a rule back exactly as the stylesheet declared it. */
-  function restoreRule(rule, decls) {
-    const style = rule.style;
-    for (let i = style.length - 1; i >= 0; i -= 1) style.removeProperty(style.item(i));
-    for (const [property, value, priority] of decls) style.setProperty(property, value, priority);
+  function restoreRule(rule, cssText) {
+    rule.style.cssText = cssText;
   }
 
   /** Applies the panel's pending ops to the live document (no file writes). */
@@ -192,7 +213,7 @@
     const all = rulesByFile();
     for (const { rule } of all) {
       const original = cssOriginals.get(rule);
-      if (original) restoreRule(rule, original);
+      if (original !== undefined) restoreRule(rule, original);
       else cssOriginals.set(rule, snapshotRule(rule));
     }
 
@@ -271,13 +292,47 @@
    * the usual block-editor rule, and it makes "move this below that" possible
    * without a second gesture.
    */
+  // Tags that read as "somewhere things go". Dropping inside an <h2> or a
+  // <code> is never what the user meant, so those only take before/after.
+  const CONTAINER_TAGS = new Set([
+    'div', 'section', 'main', 'header', 'footer', 'nav', 'article', 'aside',
+    'ul', 'ol', 'li', 'form', 'fieldset', 'body', 'figure', 'details',
+  ]);
+
+  function isContainer(el) {
+    if (CONTAINER_TAGS.has(el.tagName.toLowerCase())) return true;
+    return el.childElementCount > 0 && getComputedStyle(el).display !== 'inline';
+  }
+
+  /**
+   * Resolves the element a drop should target.
+   *
+   * `elementFromPoint` returns the deepest node under the cursor, which is
+   * often an inline leaf (`<code>` inside a paragraph, a `<span>` in a
+   * button). Moving a block into one of those is never the intent, so climb
+   * until the node is something a block can sensibly land in or beside.
+   */
+  function dropTargetOf(el, dragged) {
+    let target = el;
+    while (target && (target === dragged || dragged.contains(target))) target = target.parentElement;
+    // Climb out of inline leaves so the drop lands on their block parent.
+    while (target && target !== dragged && !isContainer(target)) {
+      const parent = target.parentElement;
+      if (!parent || parent === dragged || dragged.contains(parent)) break;
+      target = parent;
+    }
+    return target && target !== dragged && !dragged.contains(target) ? target : null;
+  }
+
   function dropPosition(node, target, x, y) {
-    if (node === target || target.contains(node)) return null;
+    if (!target || node === target || target.contains(node)) return null;
     const rect = rectOf(target);
     const px = (x - rect.x) / Math.max(rect.width, 1);
     const py = (y - rect.y) / Math.max(rect.height, 1);
     const inside = px > 0.2 && px < 0.8 && py > 0.2 && py < 0.8;
-    if (inside) return { position: 'append', rect };
+    // Only a container can receive the element as a child; anything else
+    // takes it as a sibling, which is what the pointer position implies.
+    if (inside && isContainer(target)) return { position: 'append', rect };
     if (rect.width >= rect.height) return { position: px < 0.5 ? 'before' : 'after', rect };
     return { position: py < 0.5 ? 'before' : 'after', rect };
   }
@@ -291,18 +346,16 @@
     const { rect, position } = entry;
     dropBox.hidden = false;
     dropBox.className = `__hf-drop ${position === 'append' ? '__hf-drop--zone' : '__hf-drop--line'}`;
-    dropBox.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
+    dropBox.style.width = `${rect.width}px`;
     if (position === 'append') {
-      dropBox.style.width = `${rect.width}px`;
       dropBox.style.height = `${rect.height}px`;
-    } else if (position === 'before') {
-      dropBox.style.width = `${rect.width}px`;
-      dropBox.style.height = '2px';
-    } else if (position === 'after') {
-      dropBox.style.width = `${rect.width}px`;
-      dropBox.style.height = '2px';
-      dropBox.style.transform = `translate(${rect.x}px, ${rect.y + rect.height - 2}px)`;
+      dropBox.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
+      return;
     }
+    const bar = 4;
+    dropBox.style.height = `${bar}px`;
+    const top = position === 'before' ? rect.y : rect.y + rect.height - bar;
+    dropBox.style.transform = `translate(${rect.x}px, ${top}px)`;
   }
 
   function onPointerDown(event) {
@@ -324,7 +377,7 @@
     // The pointer is over the drop indicator (pointer-events: none), so the
     // hit test below sees the real element underneath it.
     const under = document.elementFromPoint(event.clientX, event.clientY);
-    const target = under ? nodeOf(under) : null;
+    const target = under ? dropTargetOf(nodeOf(under), drag.el) : null;
     const resolved = target ? dropPosition(drag.el, target, event.clientX, event.clientY) : null;
     drag.target = target && resolved ? target.dataset.hfNode : null;
     drag.position = resolved?.position ?? null;
@@ -379,6 +432,8 @@
       select(el, { scroll: Boolean(data.scroll) });
     } else if (data.type === 'live') {
       applyLive(data);
+    } else if (data.type === 'scroll-to') {
+      window.scrollTo(0, Number(data.y) || 0);
     } else if (data.type === 'picking') {
       picking = Boolean(data.value);
       document.documentElement.style.cursor = picking ? 'crosshair' : '';

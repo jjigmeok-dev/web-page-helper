@@ -179,6 +179,117 @@ test('e2e: dragging in the preview moves the element and only saves on confirm',
   }
 });
 
+test('e2e: editing one element leaves other rules intact, including var() shorthands', async (t) => {
+  const browser = await launch();
+  if (!browser) {
+    t.skip('no Chromium available');
+    return;
+  }
+  const root = await project();
+  const studio = await startStudio({ root, port: 0, quiet: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(studio.url);
+    await page.waitForSelector('.tree__row');
+    const frame = page.frameLocator('#preview');
+    await frame.locator('.page__lede').click();
+
+    // `body { background: var(--hf-surface-2) }` is a shorthand holding a
+    // custom property. The CSSOM reports its longhands as empty, so restoring
+    // a rule longhand-by-longhand deleted it and the page turned white.
+    const before = await frame.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor);
+    assert.notEqual(before, 'rgba(0, 0, 0, 0)', 'the fixture body has a background');
+
+    const field = page.locator('#panel-appearance .field', { hasText: 'Background' }).locator('input.color__text').first();
+    await field.fill('#ff0000');
+    await field.dispatchEvent('change');
+    await page.waitForTimeout(500);
+
+    const after = await frame.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor);
+    assert.equal(after, before, 'an unrelated rule kept its var() shorthand');
+    // The edited element itself did change.
+    const lede = await frame.locator('.page__lede').evaluate((el) => getComputedStyle(el).backgroundColor);
+    assert.equal(lede, 'rgb(255, 0, 0)', 'the edit reached the picked element');
+  } finally {
+    await studio.close();
+    await browser.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('e2e: a dropped element appears at its new place before saving', async (t) => {
+  const browser = await launch();
+  if (!browser) {
+    t.skip('no Chromium available');
+    return;
+  }
+  const root = await project();
+  const studio = await startStudio({ root, port: 0, quiet: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(studio.url);
+    await page.waitForSelector('.tree__row');
+    const frame = page.frameLocator('#preview');
+    await frame.locator('.page__lede').waitFor();
+    const before = await readFile(join(root, 'index.html'), 'utf8');
+
+    const parentOf = () =>
+      frame.locator('.page__lede').evaluate((el) => el.parentElement.tagName + '.' + el.parentElement.className);
+    assert.equal(await parentOf(), 'HEADER.');
+
+    const source = await frame.locator('.page__lede').boundingBox();
+    const dest = await frame.locator('.panel').first().boundingBox();
+    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(source.x + source.width / 2 + 20, source.y + source.height / 2 + 20, { steps: 5 });
+    await page.mouse.move(dest.x + dest.width / 2, dest.y + dest.height / 2, { steps: 10 });
+    await page.mouse.up();
+
+    // The move cannot be applied to a live document, so the preview reloads
+    // from a dry-run plan; the new position must be visible right away.
+    await page.waitForFunction(
+      () => {
+        const win = document.querySelector('#preview').contentWindow;
+        const el = win?.document?.querySelector('.page__lede');
+        return Boolean(el && el.parentElement.tagName === 'SECTION');
+      },
+      null,
+      { timeout: 5000 },
+    );
+    assert.match(await parentOf(), /^SECTION\.panel/);
+
+    // The tree describes the same document, not the still-unchanged file.
+    const treeParent = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('#tree .tree__row')];
+      const lede = rows.find((row) => row.textContent.includes('.page__lede'));
+      if (!lede) return null;
+      const depth = Number(lede.getAttribute('aria-level'));
+      let prev = lede.previousElementSibling;
+      while (prev && Number(prev.getAttribute('aria-level')) >= depth) prev = prev.previousElementSibling;
+      return prev?.querySelector('.tree__tag')?.textContent ?? null;
+    });
+    assert.equal(treeParent, 'section', 'the tree followed the moving element');
+
+    assert.equal(await readFile(join(root, 'index.html'), 'utf8'), before, 'the preview alone wrote nothing');
+
+    // Discard returns the document to its saved shape.
+    await page.click('#discard-btn');
+    await page.waitForFunction(
+      () => {
+        const win = document.querySelector('#preview').contentWindow;
+        const el = win?.document?.querySelector('.page__lede');
+        return Boolean(el && el.parentElement.tagName === 'HEADER');
+      },
+      null,
+      { timeout: 5000 },
+    );
+  } finally {
+    await studio.close();
+    await browser.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('e2e: the Element panel edits and removes attributes', async (t) => {
   const browser = await launch();
   if (!browser) {

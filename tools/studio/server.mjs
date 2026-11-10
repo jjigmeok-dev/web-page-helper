@@ -22,6 +22,8 @@ import { fileURLToPath } from 'node:url';
 import { scanHtml } from '../scan/html.mjs';
 import { createApi } from './api.mjs';
 import { readSource, StudioError } from './discover.mjs';
+import { planEdits } from './edit.mjs';
+import { buildPageModel } from './model.mjs';
 
 const STUDIO_DIR = fileURLToPath(new URL('../../studio/', import.meta.url));
 
@@ -62,6 +64,15 @@ const BRIDGE_TAG = '<script type="module" src="/__studio/bridge.js"></script>';
  */
 const MODULE_PRELOAD_LIMIT = 40;
 const preloadCache = new Map();
+/**
+ * Dry-run previews, keyed by a per-request token.
+ *
+ * The studio cannot apply a structural edit (move/insert/delete) to a loaded
+ * document, so it asks for a plan and loads the result instead. The bytes live
+ * here for one render; the page URL, and therefore every relative path inside
+ * it, stays the same as on disk.
+ */
+const previewCache = new Map();
 
 function stripComments(code) {
   return code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
@@ -588,6 +599,56 @@ export async function startStudio({
         return;
       }
 
+      // --- live preview for structural edits
+      //
+      // Declaration, attribute and text edits can be applied to the loaded
+      // document in place, but the studio never re-parses HTML: a move, insert
+      // or delete has no CSSOM equivalent. Instead the pending ops are applied
+      // to an in-memory copy and served back as a real page, so the preview
+      // shows the result before anything is written. Nothing touches disk.
+      if (path === '/__api/preview' && req.method === 'POST') {
+        const body = await readBody(req);
+        const file = String(body.file ?? '').replace(/^\/+/, '');
+        const ops = Array.isArray(body.ops) ? body.ops : [];
+        let html;
+        try {
+          const { files } = await planEdits(state.root, ops);
+          const entry = files.get(file) ?? files.values().next().value;
+          if (!entry) throw new StudioError('BAD_OP', 'the plan produced no files');
+          html = entry.after;
+        } catch (error) {
+          json(req, res, 400, {
+            ok: false,
+            code: error instanceof StudioError ? error.code : 'INTERNAL',
+            message: String(error?.message ?? error),
+          });
+          return;
+        }
+        const entries = moduleEntries(html);
+        const { modules, styles } = await preloadsFor(state.root, entries, `${file}:${createHash('sha1').update(html).digest('base64url')}`);
+        const preview = instrumentHtml(html, { preloads: modules, styles });
+        // Served back at the page's own path so relative links, module URLs and
+        // fetch() keep resolving exactly as they do on the real page.
+        const key = randomBytes(9).toString('base64url');
+        if (previewCache.size > 32) previewCache.clear();
+        previewCache.set(key, { rel: file, html: preview.html, at: Date.now() });
+        // The tree must describe the same document as the preview, otherwise a
+        // moved element stays under its old parent in the sidebar.
+        let model = null;
+        try {
+          model = await buildPageModel(state.root, file, { text: html });
+        } catch {
+          /* the preview is still usable without a refreshed tree */
+        }
+        json(req, res, 200, {
+          ok: true,
+          url: `/${file}?hf-preview=${key}`,
+          model,
+          instrumented: preview.instrumented,
+        });
+        return;
+      }
+
       // --- API
       if (path.startsWith('/__api/')) {
         const action = path.slice('/__api/'.length).replace(/\/$/, '');
@@ -631,6 +692,21 @@ export async function startStudio({
       // Project files are re-read from disk on every request, so the ETag
       // follows the file: an edited file gets a new hash and a 200, an
       // untouched one gets a body-less 304.
+      // A dry-run document requested by the preview (`?hf-preview=…`): the
+      // bytes come from the cache, not from disk, and are not written back.
+      const previewKey = url.searchParams.get('hf-preview');
+      if (previewKey && rel.endsWith('.html')) {
+        const entry = previewCache.get(previewKey);
+        if (entry && entry.rel === rel) {
+          send(req, res, 200, entry.html, {
+            type: MIME['.html'],
+            // Never store a speculative document: the next plan has a new key.
+            extra: { 'Cache-Control': 'no-store' },
+          });
+          return;
+        }
+      }
+
       if (rel.endsWith('.html')) {
         const entries = moduleEntries(source.text);
         const { modules, styles } = await preloadsFor(state.root, entries, source.version);
