@@ -347,9 +347,14 @@ test('e2e: the inspector offers only the tabs that apply to the selection', asyn
     await page.goto(studio.url);
     await page.waitForSelector('.tree__row');
 
+    // `display` matters, not just the attribute: a tab rule with `display:
+    // inline-flex` once kept `hidden` tabs fully visible, so reading the
+    // attribute alone reported a layout that the user never saw.
     const visibleTabs = () =>
       page.$$eval('.tabs [role=tab]', (tabs) =>
-        tabs.filter((tab) => !tab.hidden).map((tab) => tab.textContent.replace('?', '').trim()),
+        tabs
+          .filter((tab) => getComputedStyle(tab).display !== 'none')
+          .map((tab) => tab.textContent.replace('?', '').trim()),
       );
     const selectInTree = async (label) => {
       const row = page.locator('#tree .tree__row', { hasText: label }).first();
@@ -380,7 +385,9 @@ test('e2e: the inspector offers only the tabs that apply to the selection', asyn
     assert.ok(scriptTabs.includes('Element'), 'Element always applies');
 
     // Exactly one panel is ever shown, whatever the selection did.
-    const shown = await page.$$eval('.panel', (panels) => panels.filter((p) => !p.hidden).length);
+    const shown = await page.$$eval('.panel', (panels) =>
+      panels.filter((p) => getComputedStyle(p).display !== 'none').length,
+    );
     assert.equal(shown, 1, 'exactly one panel is visible');
   } finally {
     await studio.close();
@@ -417,6 +424,134 @@ test('e2e: every panel title carries a Korean help tooltip', async (t) => {
     const before = await page.getAttribute('#tab-layout', 'aria-selected');
     await page.click('#tab-frames .help');
     assert.equal(await page.getAttribute('#tab-layout', 'aria-selected'), before, 'clicking ? does not switch tabs');
+  } finally {
+    await studio.close();
+    await browser.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('e2e: the inspector survives narrow windows instead of disappearing', async (t) => {
+  const browser = await launch();
+  if (!browser) {
+    t.skip('no Chromium available');
+    return;
+  }
+  const root = await project();
+  const studio = await startStudio({ root, port: 0, quiet: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(studio.url);
+    await page.waitForSelector('.tree__row');
+
+    // A `display: none` on the pane below 68rem used to remove the whole
+    // inspector - tabs, menus and help icons - with no way to get it back.
+    for (const width of [1440, 1024, 900, 700]) {
+      await page.setViewportSize({ width, height: 800 });
+      const pane = await page.evaluate(() => {
+        const el = document.querySelector('.pane--panel');
+        const box = el.getBoundingClientRect();
+        return {
+          display: getComputedStyle(el).display,
+          width: Math.round(box.width),
+          height: Math.round(box.height),
+          tabs: document.querySelectorAll('.tabs [role=tab]').length,
+        };
+      });
+      assert.notEqual(pane.display, 'none', `inspector is rendered at ${width}px`);
+      assert.ok(pane.width > 200 && pane.height > 100, `inspector has usable size at ${width}px`);
+      assert.ok(pane.tabs >= 4, `tabs are present at ${width}px`);
+    }
+
+    // The page <select> used to force the shell to 915px, so anything narrower
+    // scrolled horizontally and clipped the rightmost controls.
+    for (const width of [1024, 820, 700, 480]) {
+      await page.setViewportSize({ width, height: 800 });
+      const overflow = await page.evaluate(() => ({
+        scroll: document.documentElement.scrollWidth,
+        client: document.documentElement.clientWidth,
+      }));
+      assert.ok(
+        overflow.scroll <= overflow.client,
+        `no horizontal overflow at ${width}px (${overflow.scroll} > ${overflow.client})`,
+      );
+    }
+  } finally {
+    await studio.close();
+    await browser.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('e2e: every section title and field has a Korean help icon', async (t) => {
+  const browser = await launch();
+  if (!browser) {
+    t.skip('no Chromium available');
+    return;
+  }
+  const root = await project();
+  const studio = await startStudio({ root, port: 0, quiet: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(studio.url);
+    await page.waitForSelector('.tree__row');
+
+    const korean = /[\uac00-\ud7a3]/;
+    const auditPanel = () =>
+      page.evaluate(() => {
+        const panel = [...document.querySelectorAll('.panel')].find(
+          (el) => getComputedStyle(el).display !== 'none',
+        );
+        const titles = [...panel.querySelectorAll('.group__title')];
+        return {
+          id: panel.id,
+          titles: titles.map((title) => ({
+            text: title.textContent,
+            help: title.querySelector('.help')?.getAttribute('title') ?? '',
+          })),
+          fields: [...panel.querySelectorAll('.field')].map((field) => ({
+            label: field.querySelector('.field__label')?.textContent ?? '',
+            help: field.querySelector('.field__label .help')?.getAttribute('title') ?? '',
+          })),
+        };
+      });
+
+    const check = (panel) => {
+      for (const title of panel.titles) {
+        assert.ok(title.help, `${panel.id}: section "${title.text}" has a help icon`);
+        assert.match(title.help, korean, `${panel.id}: "${title.text}" help is Korean`);
+      }
+      for (const field of panel.fields) {
+        assert.ok(field.help, `${panel.id}: field "${field.label}" has a help icon`);
+        assert.match(field.help, korean, `${panel.id}: field "${field.label}" help is Korean`);
+      }
+    };
+
+    const select = async (label) => {
+      await page.locator('#tree .tree__row', { hasText: label }).first().click();
+      await page.waitForSelector('#node-path:not(:empty)');
+      await page.waitForTimeout(150);
+    };
+
+    // Layout: the field-heaviest panel.
+    await select('.page__lede');
+    await page.waitForSelector('#tab-layout:not([hidden])');
+    await page.click('#tab-layout');
+    check(await auditPanel());
+
+    // Component: foundation options.
+    await select('demo-disclosure');
+    await page.waitForSelector('#tab-component:not([hidden])');
+    await page.click('#tab-component');
+    check(await auditPanel());
+
+    // Structure: Insert/Move/Wrap/Duplicate/Delete had bare titles before.
+    await page.click('#tab-structure');
+    check(await auditPanel());
+
+    // Project: summary sections.
+    await page.click('#tab-project');
+    check(await auditPanel());
   } finally {
     await studio.close();
     await browser.close();

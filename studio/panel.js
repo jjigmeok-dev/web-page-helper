@@ -516,9 +516,10 @@ function renderNodePanel() {
   const attrRows = Object.entries(node.attrs);
 
   const content = [
-    group('Owned by', renderOwners(node)),
-    group(
+    groupHelp('Owned by', '이 요소가 어느 유저 컴포넌트의 슬롯 안에 들어 있는지, 또는 페이지 최상위에 있는지 보여줍니다.', renderOwners(node)),
+    groupHelp(
       'Element',
+      '선택한 요소의 태그·파일 내 위치·CSS 선택자·컴포넌트 종류입니다. 값은 읽기 전용이며, 바꾸려면 Attributes나 다른 탭을 씁니다.',
       el(
         'dl',
         { class: 'kv' },
@@ -537,8 +538,9 @@ function renderNodePanel() {
 
   if (!node.children.length && node.tag !== 'script' && node.tag !== 'style') {
     content.push(
-      group(
+      groupHelp(
         'Text',
+        '이 요소가 감싸는 텍스트입니다. 저장하면 HTML의 텍스트 노드가 바뀌고, 자식 요소가 있으면 이 섹션은 나오지 않습니다.',
         field(
           'content',
           textInput(node.text, (value) => {
@@ -546,6 +548,7 @@ function renderNodePanel() {
             // precondition; the file version already guards concurrent edits.
             pushOps(textOp({ file: state.page.file, version: state.page.version, nodeId: node.id, value }));
           }),
+          '이 요소가 표시하는 텍스트입니다. HTML 특수문자(&, <)는 자동으로 이스케이프됩니다.',
         ),
       ),
     );
@@ -914,20 +917,22 @@ function renderComponentPanel() {
           pushOps(optionsOp({ file: state.page.file, version: state.page.version, nodeId: node.id, options: next, previous: current }));
         });
       }
-      fields.append(field(key, input));
+      fields.append(field(key, input, '이 파운데이션의 옵션입니다. 값을 바꾸면 data-hf-options가 갱신되고 컴포넌트가 다시 초기화됩니다.'));
     }
 
     sections.push(
-      group(
+      groupHelp(
         `Foundation · ${node.component.name}`,
+        '헤드리스 파운데이션의 옵션을 폼으로 바꿉니다. 저장하면 이 요소의 data-hf-options 속성이 바뀌고, 동작은 새 옵션으로 다시 초기화됩니다.',
         node.component.summary ? el('p', { class: 'muted', text: node.component.summary }) : null,
         fields,
       ),
     );
     if (node.component.options && Object.keys(node.component.options).length) {
       sections.push(
-        group(
+        groupHelp(
           'Options attribute',
+          '지금 이 요소에 적혀 있는 data-hf-options의 원본입니다. 같은 값을 아래 폼에서 바꿀 수 있습니다.',
           el('pre', { class: 'mono muted', text: JSON.stringify(node.component.options, null, 2) }),
         ),
       );
@@ -962,13 +967,14 @@ function renderComponentPanel() {
           : type === 'number'
             ? numberInput(value, (raw) => commit(Number(raw)))
             : textInput(value, commit);
-      fields.append(field(`${key} · ${type}`, input));
+      fields.append(field(`${key} · ${type}`, input, '이 컴포넌트가 받는 prop입니다. 저장하면 요소의 속성으로 기록되고 컴포넌트가 다시 렌더됩니다.'));
     }
 
-    sections.push(group(`Component · ${node.component.name}`, fields));
+    sections.push(groupHelp(`Component · ${node.component.name}`, '유저 컴포넌트의 props입니다. 저장하면 이 요소의 속성이 바뀌고, 컴포넌트가 다시 렌더됩니다.', fields));
     sections.push(
-      group(
+      groupHelp(
         'Usage',
+        '이 컴포넌트를 지금 설정값 그대로 복사해 붙일 수 있는 마크업입니다. 다른 페이지에 그대로 넣으면 같은 모습으로 동작합니다.',
         el('pre', { class: 'mono muted', text: `<${node.tag}${Object.entries(current)
           .map(([key, value]) => ` ${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}="${value}"`)
           .join('')}></${node.tag}>` }),
@@ -1021,16 +1027,17 @@ function renderStructurePanel() {
   const wrapperInput = el('input', { type: 'text', placeholder: '<section class="wrap">' });
 
   panel.replaceChildren(
-    group(
+    groupHelp(
       'Insert',
+      '파운데이션·컴포넌트 스니펫을 선택한 위치에 삽입합니다. 프로젝트에 foundation/·components/ 레지스트리가 있어야 목록이 나옵니다.',
       insertOptions.length
         ? null
         : el('p', {
             class: 'empty',
             text: '이 프로젝트에는 foundation/ 이나 components/ 레지스트리가 없어 삽입할 스니펫이 없습니다. Wrap·Duplicate·Delete는 그대로 쓸 수 있습니다.',
           }),
-      field('snippet', snippetSelect),
-      field('position', positionSelect),
+      field('snippet', snippetSelect, '삽입할 파운데이션 또는 유저 컴포넌트입니다. project의 foundation/·components/ 레지스트리에서 가져옵니다.'),
+      field('position', positionSelect, '선택한 요소를 기준으로 어디에 넣을지 정합니다. before/after는 형제로, prepend/append는 자식으로 들어갑니다.'),
       el(
         'div',
         { class: 'row' },
@@ -1051,9 +1058,10 @@ function renderStructurePanel() {
         }),
       ),
     ),
-    group(
+    groupHelp(
       'Move',
-      field('destination', targetSelect),
+      '선택한 요소를 다른 요소 안으로 옮깁니다. HTML에서 시작·끝 태그가 통째로 이동하며, 자식도 함께 따라갑니다.',
+      field('destination', targetSelect, '선택한 요소를 옮겨 넣을 목적지 요소입니다. 그 요소의 마지막 자식으로 들어갑니다.'),
       el(
         'div',
         { class: 'row' },
@@ -1069,9 +1077,10 @@ function renderStructurePanel() {
         }),
       ),
     ),
-    group(
+    groupHelp(
       'Wrap',
-      field('wrapper', wrapperInput),
+      '선택한 요소를 새 태그로 감쌉니다. <section class="wrap">처럼 여는 태그를 적으면 그 안에 요소가 들어가고, 기존 위치는 유지됩니다.',
+      field('wrapper', wrapperInput, '선택한 요소를 감쌀 태그입니다. class·id도 함께 적을 수 있고, 태그가 하나여야 합니다.'),
       el(
         'div',
         { class: 'row' },
@@ -1092,8 +1101,9 @@ function renderStructurePanel() {
         }),
       ),
     ),
-    group(
+    groupHelp(
       'Duplicate',
+      '선택한 요소를 자식까지 그대로 복사해 바로 뒤에 붙입니다. 복사본에는 같은 id가 남으므로 필요하면 Attributes에서 바꾸세요.',
       el(
         'div',
         { class: 'row' },
@@ -1109,8 +1119,9 @@ function renderStructurePanel() {
         }),
       ),
     ),
-    group(
+    groupHelp(
       'Delete',
+      '선택한 요소를 HTML에서 제거합니다. 자식도 함께 사라지며, 저장하기 전까지는 미리보기에서만 반영됩니다.',
       el(
         'div',
         { class: 'row' },
@@ -1180,7 +1191,10 @@ function renderProjectPanel() {
     pageList.append(line);
   }
 
-  const sections = [group('Project', facts), group(`Pages (${profile.pages.length})`, pageList)];
+  const sections = [
+    groupHelp('Project', '편집 중인 프로젝트의 루트·종류(정적/빌드)·페이지 수·스타일시트·스크립트·컴포넌트 요약입니다. 빌드 도구가 있어도 소스 파일만 직접 고칩니다.', facts),
+    groupHelp(`Pages (${profile.pages.length})`, '프로젝트에서 찾은 HTML 페이지입니다. blocked 표시는 편집할 수 없는 페이지(예: 생성된 파일)이고, 노드 수는 해당 페이지의 요소 개수입니다.', pageList),
+  ];
 
   if (profile.styles.length) {
     const list = el('div', { class: 'rule__decls' });
@@ -1194,7 +1208,7 @@ function renderProjectPanel() {
       );
       list.append(line);
     }
-    sections.push(group(`Stylesheets (${profile.styles.length})`, list));
+    sections.push(groupHelp(`Stylesheets (${profile.styles.length})`, '페이지가 불러오는 CSS 파일과 그 안의 디자인 토큰 수입니다. 편집한 값은 이 파일들에 기록됩니다.', list));
   }
 
   if (profile.warnings.length) {
@@ -1215,13 +1229,20 @@ function renderProjectPanel() {
     // Only call them warnings when something is actually wrong; a proxy hint
     // is information, not a defect.
     const problems = profile.warnings.filter((warning) => warning.level !== 'info').length;
-    sections.push(group(problems ? `Warnings (${problems})` : 'Notes', list));
+    sections.push(
+      groupHelp(
+        problems ? `Warnings (${problems})` : 'Notes',
+        '프로필을 수집하면서 발견한 문제와 참고 사항입니다. 편집이 막힌 이유나 프록시 설정 힌트가 여기에 나옵니다.',
+        list,
+      ),
+    );
   }
 
   if (profile.externalOrigins.length) {
     sections.push(
-      group(
+      groupHelp(
         'External origins',
+        'CDN처럼 런타임에 불러오는 외부 파일입니다. 에디터가 이 파일을 고치지는 않으므로, 여기 적힌 출처는 편집 대상에서 빠집니다.',
         el('p', { class: 'muted', text: 'Loaded at runtime; the editor never rewrites these files.' }),
         el('div', { class: 'rule__decls' }, ...profile.externalOrigins.map((entry) => el('div', { text: entry.origin }))),
       ),
@@ -1274,8 +1295,8 @@ function renderFramesPanel() {
     : el('p', { class: 'muted', text: 'No stylesheet linked: style.css is created next to the page to hold the frame CSS.' });
 
   panel.replaceChildren(
-    group('Page frames', el('p', { class: 'muted', text: 'A frame wraps the page in a layout skeleton. Existing content moves into the frame slot.' }), ...cards),
-    group('Target', el('p', { class: 'muted', text: target }), cssNote),
+    groupHelp('Page frames', '페이지 전체를 헤더·사이드바·메인·푸터 골격으로 감쌉니다. 지금 페이지 내용은 프레임의 콘텐츠 슬롯으로 들어갑니다.', el('p', { class: 'muted', text: 'A frame wraps the page in a layout skeleton. Existing content moves into the frame slot.' }), ...cards),
+    groupHelp('Target', '프레임이 실제로 감쌀 대상입니다. body가 없으면 만들어지고, 이미 body가 있으면 그 안쪽 내용이 이동합니다.', el('p', { class: 'muted', text: target }), cssNote),
   );
 }
 
