@@ -18,7 +18,6 @@
     "prepublishOnly": "node -e \"console.error('web-page-helper is not published to npm. Install from https://github.com/jjigmeok-dev/web-page-helper'); process.exit(1)\""
   },
   "devDependencies": {
-    "linkedom": "^0.18.15",
     "playwright-core": "^1.65.0"
   }
 }

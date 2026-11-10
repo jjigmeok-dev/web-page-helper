@@ -14,7 +14,8 @@ git clone https://github.com/jjigmeok-dev/web-page-helper
 cd web-page-helper
 ```
 
-이걸로 끝이다. `npm ci`는 **테스트를 돌릴 때만** 필요하다(`linkedom`, `playwright-core`). 설치하지 않아도 에디터·CLI·데모 서버는 전부 동작한다.
+이걸로 끝이다. 런타임 의존성은 0개이고, `node_modules`를 설치하지 않아도 에디터·CLI·데모 서버가 전부 동작한다.
+`npm ci`는 **브라우저 e2e 테스트를 돌릴 때만** 필요하다(`playwright-core` 1개, 14MB).
 
 ### 2. 에디터 열기
 
@@ -87,8 +88,8 @@ npm link          # 이후 어디서든 `hf studio`
 ### 6. 테스트
 
 ```bash
-npm ci                               # 테스트 의존성 설치 (런타임에는 불필요)
-node --test tests/*.test.mjs
+node --test tests/*.test.mjs         # 의존성 없이 바로 실행 (e2e는 skip)
+npm ci                               # e2e까지 돌릴 때만
 ```
 
 158개(브라우저 e2e 포함). Chromium이 없으면 e2e만 `skip`으로 표시되고 나머지는 그대로 실행된다.

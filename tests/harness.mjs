@@ -1,4 +1,3 @@
-import { chromium } from 'playwright-core';
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
@@ -61,11 +60,34 @@ function serve(root) {
   });
 }
 
+/**
+ * Loads playwright-core lazily. It is the only test dependency, and a plain
+ * `node --test tests/*.test.mjs` on a machine without `npm ci` must still run
+ * every other suite instead of dying at import time.
+ */
+async function loadChromium() {
+  try {
+    return (await import('playwright-core')).chromium;
+  } catch {
+    return null;
+  }
+}
+
 export async function withPage(fn) {
+  const chromium = await loadChromium();
+  const executablePath = chromium ? findChrome() : null;
+  if (!chromium) {
+    const { skip } = await import('node:test');
+    skip('playwright-core is not installed (npm ci)');
+    return;
+  }
+  if (!executablePath) {
+    const { skip } = await import('node:test');
+    skip('no Chromium found; set HF_CHROME or run `npx playwright install chromium`');
+    return;
+  }
   const server = await serve(ROOT);
   const { port } = server.address();
-  const executablePath = findChrome();
-  if (!executablePath) throw new Error('no Chromium found; set HF_CHROME or run `npx playwright install chromium`');
   const browser = await chromium.launch({ executablePath, args: ['--no-sandbox'] });
   const page = await browser.newPage();
   const errors = [];
