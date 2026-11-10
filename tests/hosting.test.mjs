@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApi } from '../tools/studio/api.mjs';
-import { browseRootsFor, isLoopback, resolveToken, startStudio, tokenMatches } from '../tools/studio/server.mjs';
+import { browseRootsFor, cookieValue, isLoopback, resolveToken, startStudio, tokenMatches } from '../tools/studio/server.mjs';
 
 /**
  * Two sibling projects under one browsable parent, which is the layout the
@@ -88,6 +88,54 @@ test('a token gates the API, the studio shell and project files alike', async ()
       // The header form keeps the token out of logs and Referer.
       const viaHeader = await fetch(`${origin}/__api/project`, { headers: { 'x-hf-token': 'secret-token' } });
       assert.equal(viaHeader.status, 200);
+    });
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('cookieValue reads the studio token cookie and ignores distractors', () => {
+  assert.equal(cookieValue('a=1; hf_token=abc', 'hf_token'), 'abc');
+  assert.equal(cookieValue('hf_token=abc; other=2', 'hf_token'), 'abc');
+  assert.equal(cookieValue('hf_token=a%20b', 'hf_token'), 'a b', 'values are URL-decoded');
+  assert.equal(cookieValue('hf_tokens=abc', 'hf_token'), null, 'a name prefix is not a match');
+  assert.equal(cookieValue('other=1', 'hf_token'), null);
+  assert.equal(cookieValue('', 'hf_token'), null);
+  assert.equal(cookieValue(null, 'hf_token'), null);
+});
+
+test('the studio shell hands its own subresources a cookie, so they stop 401ing', async () => {
+  const base = await makeTree();
+  try {
+    const options = { root: join(base, 'alpha'), browseRoot: base, token: 'secret-token' };
+    await withServer(options, async (instance) => {
+      const origin = `http://127.0.0.1:${instance.port}`;
+
+      // Without it, every asset the shell pulls in is rejected: the editor
+      // renders as an empty page with no tree, tabs or styles.
+      for (const path of ['/__studio/panel.js', '/__studio/studio.css', '/index.html']) {
+        assert.equal((await fetch(origin + path)).status, 401, `${path} needs the token`);
+      }
+
+      const shell = await fetch(`${origin}/__studio?token=secret-token`);
+      assert.equal(shell.status, 200);
+      const cookie = shell.headers.get('set-cookie') ?? '';
+      assert.match(cookie, /hf_token=secret-token/, 'the shell sets the token cookie');
+      assert.match(cookie, /HttpOnly/i);
+      assert.match(cookie, /SameSite=Strict/i);
+
+      const headers = { cookie: 'hf_token=secret-token' };
+      for (const path of ['/__studio/panel.js', '/__studio/studio.css', '/index.html', '/__api/project']) {
+        assert.equal((await fetch(origin + path, { headers })).status, 200, `${path} accepts the cookie`);
+      }
+      // A wrong cookie is still rejected; the cookie is not a bypass.
+      assert.equal((await fetch(`${origin}/__studio/panel.js`, { headers: { cookie: 'hf_token=nope' } })).status, 401);
+      // The query and header forms keep working.
+      assert.equal((await fetch(`${origin}/__studio/panel.js?token=secret-token`)).status, 200);
+      assert.equal((await fetch(`${origin}/__studio/panel.js`, { headers: { 'x-hf-token': 'secret-token' } })).status, 200);
+      // A loopback-free bind only: a harmless shell request must not mint a
+      // cookie when the request carried no token at all.
+      assert.equal((await fetch(`${origin}/__studio`, { headers: { cookie: 'hf_token=nope' } })).status, 401);
     });
   } finally {
     await rm(base, { recursive: true, force: true });

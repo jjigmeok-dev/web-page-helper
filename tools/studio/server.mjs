@@ -141,6 +141,25 @@ export function tokenMatches(expected, provided) {
 }
 
 /**
+ * Reads a cookie value from a request. The studio sets one after the URL token
+ * checks out, so its own subresources (`/__studio/panel.js`, stylesheets, the
+ * preview iframe) authenticate without the token being appended to every URL.
+ */
+export function cookieValue(header, name) {
+  if (typeof header !== 'string' || !header) return null;
+  for (const part of header.split(';')) {
+    const index = part.indexOf('=');
+    if (index === -1) continue;
+    if (part.slice(0, index).trim() !== name) continue;
+    return decodeURIComponent(part.slice(index + 1).trim());
+  }
+  return null;
+}
+
+/** Cookie name for the studio session token. */
+export const TOKEN_COOKIE = 'hf_token';
+
+/**
  * A token is required whenever the bind is reachable from another machine.
  * Generating one instead of refusing keeps `--host 0.0.0.0` a single flag, but
  * the user has to be told what it is, or they cannot open the studio.
@@ -265,7 +284,10 @@ export async function startStudio({
     // A network bind is unauthenticated by design only for loopback. The token
     // is checked before any routing so no handler can leak a file listing.
     if (state.token) {
-      const provided = url.searchParams.get('token') ?? req.headers['x-hf-token'];
+      const provided =
+        url.searchParams.get('token') ??
+        req.headers['x-hf-token'] ??
+        cookieValue(req.headers.cookie, TOKEN_COOKIE);
       if (!tokenMatches(state.token, provided)) {
         json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: 'a valid ?token= is required' });
         return;
@@ -276,7 +298,14 @@ export async function startStudio({
       // --- studio UI assets
       if (path === '/__studio' || path === '/__studio/') {
         const body = await readFile(join(STUDIO_DIR, 'index.html'));
-        res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' });
+        const headers = { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' };
+        // The shell is loaded with ?token=..., but its own script, stylesheet
+        // and preview iframe cannot carry a query. Hand them a cookie once the
+        // URL proved the token, so the editor is usable over a LAN bind.
+        if (state.token && url.searchParams.get('token')) {
+          headers['Set-Cookie'] = `${TOKEN_COOKIE}=${encodeURIComponent(state.token)}; Path=/; SameSite=Strict; HttpOnly`;
+        }
+        res.writeHead(200, headers);
         res.end(body);
         return;
       }

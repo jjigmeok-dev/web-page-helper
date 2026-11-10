@@ -17,12 +17,31 @@ npm ci
 
 ### 2. 에디터 열기
 
+로컬에서만 쓰려면:
+
 ```bash
 npm run studio
 ```
 
 → <http://127.0.0.1:4174/__studio>. 끝이다. 오른쪽 패널에서 요소를 골라 고치고 `Save`를 누르면 디스크의 HTML/CSS가 바뀐다.
-포트를 바꾸려면 `npm run studio -- --port 5000`, 다른 프로젝트를 열려면 상단 `Open…`.
+
+**IPv4 네트워크로 바로 열기** — 폰이나 다른 PC에서 접속할 때:
+
+```bash
+npm run quickstart
+```
+
+빈 포트(4174부터)를 찾아 `0.0.0.0`에 바인딩하고, 접속 가능한 IPv4 주소와 토큰이 붙은 URL을 그대로 출력한다.
+포트·프로젝트를 지정할 수도 있다:
+
+```bash
+npm run quickstart -- ~/work/my-site        # 다른 프로젝트
+npm run quickstart -- --port 5000            # 포트 고정
+npm run quickstart -- --proxy http://127.0.0.1:8000
+```
+
+루프백이 아닌 바인딩은 토큰이 필수이므로, 출력되는 `lan` 주소 중 하나를 그대로 열면 된다.
+포트를 직접 고르려면 `npm run studio -- --port 5000`, 다른 프로젝트를 열려면 상단 `Open…`.
 
 ### 3. 데모 서버로 페이지 보기
 
@@ -86,6 +105,7 @@ CLI는 `npm run hf -- <명령>` 또는 `node tools/cli.mjs <명령>`으로 실�
 | `hf new page <name>` | `pages/<name>.html` 스캐폴드 |
 | `hf serve [--port 4173] [--root <dir>] [--host <addr>]` | 정적 dev 서버 (빌드·watcher 없음) |
 | `hf studio [--port 4174] [--root <dir>] [--host <addr>] [--token <v>] [--browse-root <dir>] [--proxy <url>]` | 비주얼 에디터 |
+| `npm run quickstart [-- --port N] [--proxy <url>]` | 빈 포트를 골라 `0.0.0.0`에 바인딩하고 토큰 URL까지 한 번에 출력 |
 | `hf projects add <dir>` | 프론트엔드를 등록하고 프로필 수집 |
 | `hf projects list` | 등록된 프로젝트 목록 |
 | `hf projects show <name>` | 프로필 전체 출력 (페이지·스타일시트·경고) |
@@ -108,7 +128,13 @@ hf serve  --host 0.0.0.0                    # 데모 서버도 동일
 
 루프백이 아닌 바인딩은 **항상 토큰이 필요하다**. `--token`을 생략하면 임의 토큰을 생성해 출력하고,
 `?token=`(또는 `x-hf-token` 헤더)이 없는 요청은 API·정적 파일·`/__studio` 셸까지 전부 401이다.
-출력되는 `lan` 줄이 실제 접속 주소다. 사용자 계정 개념이 없으므로 `0.0.0.0`은 신뢰된 네트워크에서만 쓴다.
+출력되는 `lan` 줄이 실제 접속 주소다. `npm run quickstart`는 이 과정을 한 명령으로 줄인 것이다(빈 포트 자동 선택).
+
+`?token=`이 붙은 셸을 한 번 열면 서버가 `hf_token` 쿠키를 내려준다. 스튜디오 자신의
+`panel.js`·CSS·미리보기 iframe은 쿼리를 실을 수 없으므로, 이 쿠키가 없으면 셸만 뜨고 화면이 비어 버린다.
+쿠키는 `HttpOnly`·`SameSite=Strict`이고 경로는 `/`다. 토큰이 틀리면 쿼리·헤더·쿠키 모두 401이다.
+
+사용자 계정 개념이 없으므로 `0.0.0.0`은 신뢰된 네트워크에서만 쓴다.
 
 ### 폴더 선택
 
