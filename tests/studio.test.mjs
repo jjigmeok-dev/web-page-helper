@@ -349,10 +349,8 @@ test('server: a bad request body is a 400, not a crash', async () => {
   }
 });
 
-test('cli: `studio` and `serve` target the current directory by default', async () => {
+test('cli: `studio` targets the current directory by default', async () => {
   const { execFile } = await import('node:child_process');
-  const { promisify } = await import('node:util');
-  const run = promisify(execFile);
   const cli = new URL('../tools/cli.mjs', import.meta.url).pathname;
   const root = await project();
   try {

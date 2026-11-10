@@ -14,7 +14,7 @@ git clone https://github.com/jjigmeok-dev/web-page-helper
 cd web-page-helper
 ```
 
-이걸로 끝이다. 런타임 의존성은 0개이고, `node_modules`를 설치하지 않아도 에디터·CLI·데모 서버가 전부 동작한다.
+이걸로 끝이다. 런타임 의존성은 0개이고, `node_modules`를 설치하지 않아도 에디터·CLI가 전부 동작한다.
 `npm ci`는 **브라우저 e2e 테스트를 돌릴 때만** 필요하다(`playwright-core` 1개, 14MB).
 
 ### 2. 에디터 열기
@@ -34,30 +34,26 @@ npm link          # 이후 어디서든 `hf studio`
 **IPv4 네트워크로 바로 열기** — 폰이나 다른 PC에서 접속할 때:
 
 ```bash
-./tools/quickstart.mjs
+./run-web.sh
 ```
 
 빈 포트(4174부터)를 찾아 `0.0.0.0`에 바인딩하고, 접속 가능한 IPv4 주소와 토큰이 붙은 URL을 그대로 출력한다.
 포트·프로젝트를 지정할 수도 있다:
 
 ```bash
-./tools/quickstart.mjs ~/work/my-site        # 다른 프로젝트
-./tools/quickstart.mjs --port 5000            # 포트 고정
-./tools/quickstart.mjs --proxy http://127.0.0.1:8000
+./run-web.sh ~/work/my-site                   # 다른 프로젝트
+./run-web.sh -p 5000                          # 포트 고정
+./run-web.sh -t my-secret                     # 토큰 고정
+./run-web.sh --proxy http://127.0.0.1:8000
 ```
+
+내부적으로는 `tools/cli.mjs studio --host 0.0.0.0`을 `exec`한다 — 서버는 하나뿐이고,
+이 스크립트는 빈 포트 선택과 접속 주소 출력만 담당한다.
 
 루프백이 아닌 바인딩은 토큰이 필수이므로, 출력되는 `lan` 주소 중 하나를 그대로 열면 된다.
 다른 프로젝트를 열려면 상단 `Open…`.
 
-### 3. 데모 서버로 페이지 보기
-
-```bash
-./tools/cli.mjs serve
-```
-
-→ <http://127.0.0.1:4173>. 파일을 고치고 새로고침하면 반영된다. watcher도 빌드 단계도 없다.
-
-### 4. 컴포넌트 만들기
+### 3. 컴포넌트 만들기
 
 파운데이션(동작·ARIA)을 유저 컴포넌트(마크업·CSS)로 조립한다.
 
@@ -110,9 +106,7 @@ npm 스크립트(`npm run studio` 등)는 같은 명령의 별칭일 뿐이며, 
 | `hf new foundation <name>` | 헤드리스 파운데이션 스캐폴드 + `foundation/index.js` 등록 |
 | `hf new component <name>` | 유저 컴포넌트 `components/<name>/{<name>.js,<name>.css}` 스캐폴드 |
 | `hf new page <name>` | `pages/<name>.html` 스캐폴드 |
-| `hf serve [--port 4173] [--root <dir>] [--host <addr>]` | 정적 dev 서버 (빌드·watcher 없음) |
 | `hf studio [--port 4174] [--root <dir>] [--host <addr>] [--token <v>] [--browse-root <dir>] [--proxy <url>]` | 비주얼 에디터 |
-| `hf-quickstart [--port N] [--proxy <url>]` | 빈 포트를 골라 `0.0.0.0`에 바인딩하고 토큰 URL까지 한 번에 출력 |
 | `hf projects add <dir>` | 프론트엔드를 등록하고 프로필 수집 |
 | `hf projects list` | 등록된 프로젝트 목록 |
 | `hf projects show <name>` | 프로필 전체 출력 (페이지·스타일시트·경고) |
@@ -130,12 +124,13 @@ npm 스크립트(`npm run studio` 등)는 같은 명령의 별칭일 뿐이며, 
 ```bash
 hf studio --host 0.0.0.0                    # → http://0.0.0.0:4174/__studio?token=…
 hf studio --host 0.0.0.0 --token my-secret  # 토큰 고정
-hf serve  --host 0.0.0.0                    # 데모 서버도 동일
+
+./run-web.sh                                # 위 과정을 bash 한 줄로 (빈 포트 자동 선택)
 ```
 
 루프백이 아닌 바인딩은 **항상 토큰이 필요하다**. `--token`을 생략하면 임의 토큰을 생성해 출력하고,
 `?token=`(또는 `x-hf-token` 헤더)이 없는 요청은 API·정적 파일·`/__studio` 셸까지 전부 401이다.
-출력되는 `lan` 줄이 실제 접속 주소다. `npm run quickstart`는 이 과정을 한 명령으로 줄인 것이다(빈 포트 자동 선택).
+출력되는 `lan` 줄이 실제 접속 주소다. `run-web.sh`(=`npm run web`)는 이 과정을 bash 한 줄로 줄인 것이다.
 
 `?token=`이 붙은 셸을 한 번 열면 서버가 `hf_token` 쿠키를 내려준다. 스튜디오 자신의
 `panel.js`·CSS·미리보기 iframe은 쿼리를 실을 수 없으므로, 이 쿠키가 없으면 셸만 뜨고 화면이 비어 버린다.
@@ -160,8 +155,7 @@ hf serve  --host 0.0.0.0                    # 데모 서버도 동일
 npm run hf -- new foundation my-widget   # 동작 + ARIA + meta
 npm run hf -- new component promo-card   # 파운데이션을 조립한 유저 컴포넌트
 npm run hf -- new page about             # 페이지
-npm run dev                              # http://127.0.0.1:4173/pages/about.html
-npm run studio                           # 브라우저에서 선택 → 편집 → 저장
+npm run studio                           # 브라우저에서 선택 → 편집 → 저장 (pages/about.html)
 npm run hf -- validate                   # 계약 위반 0 확인
 ```
 
@@ -373,7 +367,7 @@ export const meta = {
 ## 테스트
 
 ```bash
-npm test     # 142개: 스캐너, 편집 엔진, 저널, API, 서버, 호스팅/토큰/폴더 탐색, 프로필/레지스트리, 소유권 판정, 빈 DOM 부트스트랩, 제안 엔진, op 빌더, 브라우저 e2e
+npm test     # 159개: 스캐너, 편집 엔진, 저널, API, 서버, 호스팅/토큰/폴더 탐색, 프로필/레지스트리, 소유권 판정, 빈 DOM 부트스트랩, 제안 엔진, op 빌더, run-web.sh, 브라우저 e2e
 ```
 
 `tests/edit.test.mjs`는 HTML/CSS 스캐너와 편집 엔진을 덮는다: 바이트 범위 정확성, 범위 밖 바이트 보존, 버전 불일치 거부, op별 가드(`VOID_NODE`, `NOT_A_LEAF`, `NO_RULE`, `BAD_SELECTOR`), CSS 배치 순차 적용, 재스캔 후 롤백.

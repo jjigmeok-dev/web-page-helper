@@ -6,14 +6,12 @@
  *   hf new foundation <name>     scaffold a headless foundation
  *   hf new component <name>      scaffold a user component (markup + css + js)
  *   hf new page <name>           scaffold a demo page
- *   hf serve [--port 4173]       static dev server, no bundling
  *   hf studio [--port 4174]      visual editor: pick, edit layout, save
  *   hf validate                  enforce headless rules + check imports
  */
-import { createServer } from 'node:http';
-import { readFile, readdir, mkdir, writeFile, stat } from 'node:fs/promises';
+import { readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { extname, join, resolve, dirname, normalize, sep } from 'node:path';
+import { join, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -21,19 +19,6 @@ const FOUNDATION_DIR = join(ROOT, 'foundation');
 const COMPONENT_DIR = join(ROOT, 'components');
 const PAGES_DIR = join(ROOT, 'pages');
 
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.woff2': 'font/woff2',
-  '.map': 'application/json; charset=utf-8',
-  '.ico': 'image/x-icon',
-};
 
 const ok = (message) => console.log(`\x1b[32m✓\x1b[0m ${message}`);
 const info = (message) => console.log(`\x1b[36m·\x1b[0m ${message}`);
@@ -311,7 +296,7 @@ async function newPage(args) {
   const force = rest.includes('--force');
   if (!name) return fail('usage: hf new page <name>');
   await writeNew(join(PAGES_DIR, `${name}.html`), pageHtml(name), force);
-  info(`open http://localhost:4173/pages/${name}.html after \`hf serve\``);
+  info(`open /pages/${name}.html in the studio: ./tools/cli.mjs studio`);
 }
 
 /* --------------------------------------------------------------- projects */
@@ -459,20 +444,6 @@ function printProfile(profile, { verbose = false } = {}) {
   }
 }
 
-/* ------------------------------------------------------------------ serve */
-
-function safeJoin(base, urlPath) {
-  const decoded = decodeURIComponent(urlPath.split('?')[0]);
-  const target = normalize(join(base, decoded));
-  if (!target.startsWith(base + sep) && target !== base) return null;
-  return target;
-}
-
-/**
- * `--root <dir>` (or a bare positional path) points the server at a project.
- * The default is the current directory, so `hf studio` works from a user's own
- * project instead of always editing the toolkit.
- */
 /** Flags that consume the next argument; their value is not a path. */
 const VALUE_FLAGS = new Set(['--root', '-r', '--port', '-p', '--proxy', '--host', '--token', '--browse-root']);
 
@@ -532,58 +503,6 @@ function proxyArg(args) {
   return url.origin;
 }
 
-async function serve(args) {
-  const portFlag = args.indexOf('--port');
-  const port = Number(portFlag >= 0 ? args[portFlag + 1] : process.env.PORT) || 4173;
-  const root = rootArg(args);
-  const { isLoopback, lanAddresses, resolveToken, tokenMatches } = await import('./studio/server.mjs');
-  const host = hostArg(args);
-  const token = resolveToken(host, tokenArg(args));
-
-  const server = createServer(async (req, res) => {
-    // Same rule as the studio: a network bind is token-gated so an accidental
-    // `--host 0.0.0.0` does not publish the project to the whole LAN.
-    if (token) {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? host}`);
-      const provided = url.searchParams.get('token') ?? req.headers['x-hf-token'];
-      if (!tokenMatches(token, provided)) {
-        res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' }).end('401 token required');
-        return;
-      }
-    }
-    let target = safeJoin(root, req.url === '/' ? '/index.html' : req.url);
-    if (!target) {
-      res.writeHead(403).end('Forbidden');
-      return;
-    }
-    try {
-      let stats = await stat(target);
-      if (stats.isDirectory()) {
-        target = join(target, 'index.html');
-        stats = await stat(target);
-      }
-      const body = await readFile(target);
-      res.writeHead(200, {
-        'Content-Type': MIME[extname(target)] || 'application/octet-stream',
-        'Content-Length': body.length,
-        'Cache-Control': 'no-store',
-      });
-      res.end(body);
-    } catch {
-      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end(`404 ${req.url}`);
-    }
-  });
-
-  server.listen(port, host, () => {
-    const query = token ? `?token=${token}` : '';
-    ok(`dev server http://${host}:${port}/${query}`);
-    if (!isLoopback(host)) {
-      for (const address of lanAddresses()) dim(`lan http://${address}:${port}/${query}`);
-    }
-    info('edit files and reload — no build step, no watcher');
-  });
-}
 
 /* ------------------------------------------------------------------ validate */
 
@@ -739,8 +658,6 @@ async function main() {
   hf new foundation <name>       scaffold a headless foundation
   hf new component <name>        scaffold a user component
   hf new page <name>             scaffold a demo page
-  hf serve [--port 4173]         static dev server
-  hf serve --host 0.0.0.0        serve on the network (phone / another machine)
   hf studio [--port 4174]        visual editor (select, edit, save)
   hf studio --host 0.0.0.0       also listen on the network (LAN / phone testing)
   hf studio --token <value>      pin the access token instead of generating one
@@ -753,16 +670,15 @@ async function main() {
   hf projects remove <name>      forget a project
   hf validate                    enforce headless rules
 
-  hf-quickstart                  same as \`hf studio --host 0.0.0.0\` on a free port
+  ./run-web.sh                   studio on a free IPv4 port (bash wrapper)
   ./tools/cli.mjs <command>      run it without installing anything
 
-Docs: README.md · Demo: http://localhost:4173 after \`hf serve\`
+Docs: README.md
 `);
     return;
   }
 
   if (command === 'list') return list();
-  if (command === 'serve') return serve(process.argv.slice(3));
   if (command === 'studio') return studio(process.argv.slice(3));
   if (command === 'validate') return validate();
   if (command === 'projects' || command === 'project') return projects(process.argv.slice(3));
