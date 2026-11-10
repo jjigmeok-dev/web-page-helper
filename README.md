@@ -2,11 +2,79 @@
 
 빌드 없는 HTML/CSS/JS 프론트엔드 툴킷. **헤드리스 파운데이션**(동작·ARIA만 담당)을 **유저 컴포넌트**(마크업+CSS)로 조립하고, 브라우저에서 직접 편집한다. 번들러도, 프레임워크도, 컴파일 단계도 없다.
 
+## 퀵스타트
+
+### 1. 설치
+
+Node.js 22 이상. 내장 모듈(`node:http`, `node:test`, `node:fs`)만 쓰고, 검증은 22.23.2에서 했다.
+빌드 도구·번들러는 설치하지 않는다.
+
 ```bash
-npm run studio          # http://127.0.0.1:4174/__studio — 비주얼 에디터
-npm run dev             # http://127.0.0.1:4173        — 정적 데모 서버
-npm test                # 142개 (브라우저 e2e 포함, Chromium 없으면 skip)
+git clone https://github.com/jjigmeok-dev/web-page-helper
+cd web-page-helper
+npm ci
 ```
+
+### 2. 에디터 열기
+
+```bash
+npm run studio
+```
+
+→ <http://127.0.0.1:4174/__studio>. 끝이다. 오른쪽 패널에서 요소를 골라 고치고 `Save`를 누르면 디스크의 HTML/CSS가 바뀐다.
+포트를 바꾸려면 `npm run studio -- --port 5000`, 다른 프로젝트를 열려면 상단 `Open…`.
+
+### 3. 데모 서버로 페이지 보기
+
+```bash
+npm run dev
+```
+
+→ <http://127.0.0.1:4173>. 파일을 고치고 새로고침하면 반영된다. watcher도 빌드 단계도 없다.
+
+### 4. 컴포넌트 만들기
+
+파운데이션(동작·ARIA)을 유저 컴포넌트(마크업·CSS)로 조립한다.
+
+```bash
+npm run hf -- new foundation my-widget   # foundation/my-widget.js + index.js 등록
+npm run hf -- new component promo-card   # components/promo-card/{js,css}
+npm run hf -- new page about             # pages/about.html
+```
+
+만든 뒤 계약을 검사하고 목록을 확인한다.
+
+```bash
+npm run hf -- validate   # 클래스/인라인 스타일/CSS 주입 금지 검사
+npm run hf -- list       # 파운데이션·컴포넌트·페이지 목록
+```
+
+### 5. 다른 프로젝트에 붙이기
+
+이미 있는 프론트엔드를 등록하면 스택·페이지·토큰을 프로파일링하고 바로 에디터로 연다.
+
+```bash
+npm run hf -- projects add ~/work/my-site
+npm run hf -- projects up my-site        # 프로필 출력 후 studio 실행
+```
+
+프로필 출력, `--proxy` 연결, `~/.hf` 저널 위치는 [다른 프로젝트에 붙이기](#다른-프로젝트에-붙이기)에 있다.
+
+### 6. 테스트
+
+```bash
+npm test
+```
+
+148개(브라우저 e2e 포함). Chromium이 없으면 e2e만 `skip`으로 표시되고 나머지는 그대로 실행된다.
+e2e까지 돌리려면 한 번만 설치한다:
+
+```bash
+npx playwright install chromium
+npm test
+```
+
+## 명령
 
 CLI는 `npm run hf -- <명령>` 또는 `node tools/cli.mjs <명령>`으로 실행한다.
 
