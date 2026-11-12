@@ -107,10 +107,10 @@ test('frameDocument refuses a page that already has a body', async () => {
 });
 
 /**
- * A suggestion commonly turns into several declarations for one selector. When
- * the rule does not exist yet, the second op must extend the block the first
- * created instead of rewriting it — otherwise `display: flex` disappears and
- * only the last declaration survives.
+ * One panel edit commonly turns into several declarations for one selector.
+ * When the rule does not exist yet, the second op must extend the block the
+ * first created instead of rewriting it — otherwise `display: flex`
+ * disappears and only the last declaration survives.
  */
 test('several declarations for a brand-new rule all land in it', async () => {
   await withPage('<!doctype html><html><head><title>T</title></head><body><div class="row"></div></body></html>', async (root) => {

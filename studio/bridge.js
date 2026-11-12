@@ -124,6 +124,9 @@
   // Page layout tab: when set, the real page is hidden and these area boxes
   // are drawn instead. `null` means normal editing.
   let skeletonAreas = null;
+  // True while the placement panel is open: geometry is only measured (a
+  // forced layout read) when someone is actually looking at it.
+  let measureWanted = false;
   // Drag-to-move: press on a node, move past a threshold, release over a
   // target. Only the *intent* is computed here; the studio turns it into an
   // op through the normal pending/save path, so a drag is never a write.
@@ -216,6 +219,7 @@
     if (scroll && selectedEl) selectedEl.scrollIntoView({ block: 'center', inline: 'nearest' });
     const target = origin && origin !== el ? describeElement(origin) : null;
     post('selected', { id: selectedId, target });
+    postGeometry();
   }
 
   /** Minimal identity for an element that has no `data-hf-node` of its own. */
@@ -224,6 +228,44 @@
       tag: el.tagName.toLowerCase(),
       classes: Array.from(el.classList).filter((name) => name !== '__hf-selected'),
       text: (el.textContent ?? '').trim().slice(0, 60),
+    };
+  }
+
+  /**
+   * Where the selected element actually sits, measured from the live layout.
+   *
+   * The studio model has no geometry: it is a source scan, so it cannot know
+   * that a `grid` row resolved to 180px or that the element is inside the
+   * header band. This is the one thing only the rendered frame can answer, so
+   * the panel asks for it instead of guessing.
+   *
+   * Coordinates are page-relative (`scrollX/Y` added), which keeps them stable
+   * while the user scrolls; the element's share of the page is computed from
+   * the document's scroll size, not the viewport.
+   */
+  function describeGeometry(el) {
+    if (!el || !document.contains(el)) return null;
+    const rect = el.getBoundingClientRect();
+    const doc = document.documentElement;
+    const style = getComputedStyle(el);
+    const label = (node) => {
+      if (!node) return null;
+      const described = describeElement(node);
+      return `${described.tag}${described.classes.length ? `.${described.classes.join('.')}` : ''}`;
+    };
+    return {
+      tag: el.tagName.toLowerCase(),
+      x: Math.round(rect.left + window.scrollX),
+      y: Math.round(rect.top + window.scrollY),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      pageWidth: Math.round(doc.scrollWidth),
+      pageHeight: Math.round(doc.scrollHeight),
+      display: style.display,
+      position: style.position,
+      zIndex: style.zIndex === 'auto' ? null : style.zIndex,
+      offsetParent: label(el.offsetParent),
+      parent: label(el.parentElement),
     };
   }
 
@@ -499,8 +541,14 @@
   document.addEventListener('pointerleave', () => {
     hoverBox.hidden = true;
   });
+  // No geometry update on scroll: the panel reports page-relative
+  // coordinates (`scrollX + rect.left`), which do not change while scrolling.
+  // Reposting them would re-render the panel every frame for identical values.
   window.addEventListener('scroll', paintOverlay, true);
-  window.addEventListener('resize', paintOverlay);
+  window.addEventListener('resize', () => {
+    paintOverlay();
+    postGeometry();
+  });
 
   window.addEventListener('message', (event) => {
     const data = event.data;
@@ -519,10 +567,22 @@
       // `areas` is absent (or null) when the user leaves the page layout tab.
       skeletonAreas = Array.isArray(data.areas) ? data.areas : null;
       paintSkeleton();
+    } else if (data.type === 'measure') {
+      // The placement readout must stay correct across resizes and edits, so
+      // remember that the panel is watching and answer this request now.
+      measureWanted = Boolean(data.watch);
+      postGeometry();
     } else if (data.type === 'reposition') {
       paintOverlay();
     }
   });
+
+  /** Sends the current geometry, but only when the panel asked for it. */
+  function postGeometry() {
+    if (!measureWanted) return;
+    const geometry = describeGeometry(selectedEl);
+    if (geometry) post('geometry', { geometry });
+  }
 
   // The panel needs the document height to keep its scroll position sane.
   new ResizeObserver(paintOverlay).observe(document.documentElement);

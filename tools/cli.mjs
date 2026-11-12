@@ -87,7 +87,7 @@ export const meta = {
   summary: 'TODO: one sentence about the interaction.',
   parts: { trigger: 'button', panel: 'any' },
   // Parts mount() throws without. Keep in sync with the guard below:
-  // the studio's Suggestions use it to report a broken instance.
+  // consumers use it to tell a broken instance from an optional slot.
   required: ['trigger', 'panel'],
   options: { defaultOpen: false },
   events: ['hf:open', 'hf:close'],

@@ -27,7 +27,6 @@ import {
   textOp,
   wrapOp,
 } from './ops.js';
-import { SEVERITY_LABEL, indexTree, suggestionsFor } from './suggest.js';
 
 const $ = (selector) => document.querySelector(selector);
 const el = (tag, props = {}, ...children) => {
@@ -60,6 +59,11 @@ const state = {
   // True once the user chooses a tab by hand for the current selection.
   tabPinned: false,
   nodeIndex: new Map(),
+  // Tree shape (parent lookup for frame-area detection), rebuilt with the page.
+  pageParents: null,
+  // Last measurement from the live preview for the selected element; null
+  // until the bridge answers a `measure` request. Never inferred from source.
+  geometry: null,
   // Set while the preview shows a dry-run document (structural edits pending);
   // the URL of that document, so it can be torn down when the set empties.
   previewUrl: null,
@@ -110,7 +114,6 @@ const ui = {
     component: $('#panel-component'),
     structure: $('#panel-structure'),
     pageLayout: $('#panel-page-layout'),
-    project: $('#panel-project'),
   },
   tabs: {
     appearance: $('#tab-appearance'),
@@ -119,8 +122,10 @@ const ui = {
     component: $('#tab-component'),
     structure: $('#tab-structure'),
     pageLayout: $('#tab-page-layout'),
-    project: $('#tab-project'),
   },
+  projectButton: $('#project-btn'),
+  projectDialog: $('#project-dialog'),
+  projectBody: $('#project-body'),
 };
 
 /* ------------------------------------------------------------ api */
@@ -173,6 +178,19 @@ function flatten(node, depth = 0, out = []) {
   return out;
 }
 
+/** node id -> parent node, for walking up the tree. */
+function parentIndex(tree) {
+  const parentOf = new Map();
+  const walk = (node) => {
+    for (const child of node.children) {
+      parentOf.set(child.id, node);
+      walk(child);
+    }
+  };
+  walk(tree);
+  return parentOf;
+}
+
 function badgeFor(node) {
   const kind = node.component?.kind;
   if (kind === 'foundation') return el('span', { class: 'tree__badge', text: node.component.name });
@@ -207,8 +225,7 @@ function findByFingerprint(node, candidates) {
 
 function renderTree() {
   const tree = state.page.tree;
-  // Rebuilt with the page: part ownership and duplicate-id checks read it.
-  state.treeIndex = indexTree(tree);
+  state.pageParents = parentIndex(tree);
   state.nodeIndex = new Map();
   const rows = flatten(tree);
   const fragment = document.createDocumentFragment();
@@ -291,13 +308,35 @@ function select(id, { scroll = false, fromTree = false, target = null } = {}) {
   }
   if (state.tab === 'appearance') renderAppearancePanel();
   if (state.tab === 'node') renderNodePanel();
-  if (state.tab === 'layout') renderLayoutPanel();
+  if (state.tab === 'layout') {
+    // A different element means the old measurement is about something else.
+    state.geometry = null;
+    renderLayoutPanel();
+    requestGeometry();
+  }
   if (state.tab === 'component') renderComponentPanel();
   if (state.tab === 'structure') renderStructurePanel();
 }
 
 function postToBridge(message) {
   ui.preview.contentWindow?.postMessage({ source: 'hf-studio', ...message }, '*');
+}
+
+/**
+ * Asks the preview for the selected element's measured box.
+ *
+ * Only called when the placement tab is visible or about to be: a single
+ * `getBoundingClientRect` + `getComputedStyle` forces layout, so measuring on
+ * every selection when nobody is looking would be a real cost for no view.
+ */
+function requestGeometry() {
+  if (!state.selected) return;
+  postToBridge({ type: 'measure', watch: true });
+}
+
+/** Stops the preview measuring for a tab that is no longer showing. */
+function stopGeometry() {
+  postToBridge({ type: 'measure', watch: false });
 }
 
 /**
@@ -308,8 +347,15 @@ function postToBridge(message) {
  */
 function syncSkeleton(tabName) {
   const active = tabName === 'pageLayout';
+  if (!active) {
+    stopGeometry();
+    // Leaving the tab clears the choice so reopening re-detects the page
+    // instead of resurrecting whatever preset was picked an hour ago.
+    state.previewFrame = null;
+  }
+  const detected = detectFrame(state.page)?.id;
   const preset = active
-    ? (FRAME_PRESETS.find((entry) => entry.id === state.previewFrame) ?? FRAME_PRESETS[0])
+    ? (FRAME_PRESETS.find((entry) => entry.id === (state.previewFrame ?? detected)) ?? FRAME_PRESETS[0])
     : null;
   if (preset) state.previewFrame = preset.id;
   postToBridge({ type: 'skeleton', areas: preset ? preset.areas : null });
@@ -514,7 +560,6 @@ function declsOf(rule) {
   return out;
 }
 
-/** The stylesheet that should receive new declarations for this node. */
 /**
  * Picks the stylesheet a layout edit should land in.
  *
@@ -674,32 +719,20 @@ function renderNodePanel() {
     panel.replaceChildren(el('p', { class: 'empty', text: 'Select an element in the preview or the tree.' }));
     return;
   }
-  const selector = selectorForNode(node);
   const rules = state.page.matched[node.id] ?? [];
   const attrRows = Object.entries(node.attrs);
 
+  // Tag/line/selector used to live here too. They are the contents of the
+  // 코드 위치 tab now, and printing them twice invites the two copies to
+  // disagree about the same element.
   const content = [
     groupHelp('Owned by', '이 요소가 어느 유저 컴포넌트의 슬롯 안에 들어 있는지, 또는 페이지 최상위에 있는지 보여줍니다.', renderOwners(node)),
-    groupHelp(
-      'Element',
-      '선택한 요소의 태그·파일 내 위치·CSS 선택자·컴포넌트 종류입니다. 값은 읽기 전용이며, 바꾸려면 Attributes나 다른 탭을 씁니다.',
-      el(
-        'dl',
-        { class: 'kv' },
-        el('dt', { text: 'tag' }),
-        el('dd', { text: node.tag }),
-        el('dt', { text: 'line' }),
-        el('dd', { text: String(node.line) }),
-        el('dt', { text: 'selector' }),
-        el('dd', { class: 'mono', text: selector ?? '—' }),
-        node.component?.kind !== 'plain'
-          ? [el('dt', { text: 'component' }), el('dd', { text: `${node.component.kind}: ${node.component.name}` })]
-          : null,
-      ),
-    ),
   ];
 
-  if (!node.children.length && node.tag !== 'script' && node.tag !== 'style') {
+  // Void elements (`<img>`, `<br>`, `<input>`) can never hold text; offering a
+  // content box for them produces a `VOID_NODE` error on save.
+  const canHoldText = !node.children.length && !VOID_TAGS.has(node.tag) && node.tag !== 'script' && node.tag !== 'style';
+  if (canHoldText) {
     content.push(
       groupHelp(
         'Text',
@@ -719,8 +752,14 @@ function renderNodePanel() {
 
   // Attributes are editable: plain HTML projects need this for `aria-*`,
   // `tabindex`, `role`, and data attributes the panels above do not cover.
+  const media = renderMedia(node);
+  if (media) content.splice(1, 0, media);
   const attrList = el('div', { class: 'rule__decls' });
-  for (const [name, value] of attrRows) {
+  // Attributes the Picture/Icon group already owns are not repeated here;
+  // `class`, `data-*` and the rest still are.
+  const mediaNames = mediaAttrNames(node);
+  const otherAttrs = attrRows.filter(([name]) => !mediaNames.has(name.toLowerCase()));
+  for (const [name, value] of otherAttrs) {
     attrList.append(
       el(
         'div',
@@ -792,8 +831,8 @@ function renderNodePanel() {
   );
   content.push(
     groupHelp(
-      `Attributes (${attrRows.length})`,
-      'HTML 속성을 직접 편집합니다. role·aria-*·tabindex·data-* 처럼 다른 패널이 다루지 않는 값을 여기서 바꿉니다.',
+      `Attributes (${otherAttrs.length})`,
+      'HTML 속성을 직접 편집합니다. role·aria-*·tabindex·data-* 처럼 다른 패널이 다루지 않는 값을 여기서 바꿉니다. 위 Picture/Icon에서 다루는 속성은 여기에 중복되지 않습니다.',
       attrList,
     ),
   );
@@ -810,91 +849,155 @@ function renderNodePanel() {
     );
   }
 
-  content.push(renderSuggestions(node));
-
   panel.replaceChildren(...content);
 }
 
-/* ---- suggestions */
+/* ---- media (image / icon) */
+
+const MEDIA_TAGS = new Set(['img', 'picture', 'source', 'video', 'audio', 'iframe', 'svg']);
 
 /**
- * What is worth changing about this element.
+ * Attribute names the Picture/Icon group already edits, lowercased.
  *
- * Every suggestion is an op the editor already knows how to apply, so a click
- * lands in the same pending/diff/save path as editing a field by hand. Nothing
- * is written here.
+ * The generic attribute list below it can then leave those out: the same
+ * `src` in two controls on one panel is a second place to disagree about the
+ * value, and only one of them explains what it does.
  */
-function renderSuggestions(node) {
-  const target = (() => {
-    const sheet = styleTarget(node);
-    if (!sheet?.file) return null;
-    return { ...sheet, selector: selectorForNode(node) };
-  })();
-  const index = state.treeIndex ?? indexTree(state.page.tree);
-  const list = suggestionsFor(node, state.page, target, index);
-
-  const body = el('div', { class: 'suggest' });
-  if (!list.length) {
-    body.append(el('p', { class: 'muted', text: 'Nothing to suggest for this element.' }));
+function mediaAttrNames(node) {
+  const names = new Set();
+  const tag = node.tag;
+  const icon = tag === 'svg' ? node : node.children.find((child) => child.tag === 'svg' || child.tag === 'use') ?? null;
+  if (tag === 'img' || tag === 'picture' || tag === 'source') {
+    names.add('src');
+    names.add('alt');
   }
-  for (const entry of list) {
-    const apply = entry.ops?.length
-      ? el('button', {
-          type: 'button',
-          class: 'btn btn--suggest',
-          text: 'Apply',
-          title: 'Add these changes to the pending diff',
-          onclick: () => {
-            // Ops from the engine carry no file/version: the panel owns those,
-            // so one suggestion never has to know where the page lives.
-            const isCss = (op) => op.op === 'setDecl' || op.op === 'removeDecl';
-            const scoped = [];
-            for (const op of entry.ops) {
-              const file = op.file ?? (isCss(op) ? target?.file : state.page.file);
-              // A suggestion is filtered out rather than emitting an op with no
-              // target file: the write plan would reject it later anyway.
-              if (!file) continue;
-              // The wire format addresses nodes as `node`; the engine speaks
-              // `nodeId` because that is easier to read in a suggestion.
-              scoped.push({
-                ...op,
-                file,
-                version: op.version ?? (isCss(op) ? target?.version : state.page.version),
-                node: op.node ?? op.nodeId ?? node.id,
-                nodeId: undefined,
-              });
-            }
-            if (scoped.length) pushOps(scoped);
-            else setStatus('Nothing to apply: no stylesheet target for this element', 'error');
-          },
-        })
-      : null;
-
-    body.append(
-      el(
-        'div',
-        { class: `suggest__row suggest__row--${entry.severity}` },
-        el('span', { class: `suggest__tag suggest__tag--${entry.severity}`, text: SEVERITY_LABEL[entry.severity] }),
-        el('div', { class: 'suggest__text' }, el('strong', { text: entry.title }), el('span', { class: 'muted', text: entry.detail })),
-        apply,
-      ),
-    );
+  if (tag === 'video' || tag === 'audio' || tag === 'iframe') {
+    names.add('src');
+    names.add('title');
   }
-
-  return groupHelp(`Suggestions (${list.length})`, '이 요소에서 고칠 만한 것을 제안합니다. Apply를 누르면 손으로 고친 것과 같은 대기 변경에 들어갑니다.', body);
+  if (icon === node) {
+    names.add('aria-label');
+    names.add('viewbox');
+  }
+  if (icon?.tag === 'use') names.add('href');
+  return names;
 }
 
-/* ---- layout panel */
+/**
+ * Picture and icon content, edited as the attributes that carry it.
+ *
+ * Text is only half of "내용": an `<img>` has no text node, and an inline
+ * `<svg>` icon is markup, not copy. Both used to be reachable only through the
+ * generic attribute list, which is exactly the raw-HTML view this tab exists to
+ * hide. These are the same `attrOp`s, labelled by what they do.
+ *
+ * Returns `null` for elements with nothing media-like about them, so the
+ * section disappears instead of showing empty fields.
+ */
+function renderMedia(node) {
+  const tag = node.tag;
+  const svgChild = node.children.find((child) => child.tag === 'svg');
+  const useChild = node.children.find((child) => child.tag === 'use');
+  const icon = tag === 'svg' ? node : svgChild ?? useChild ?? null;
+  if (!MEDIA_TAGS.has(tag) && !icon) return null;
+
+  // The scanner lowercases every attribute name, so `viewBox` arrives as
+  // `viewbox`. Look names up case-insensitively and write the spelling that is
+  // already in the file, or the edit would add a second attribute next to it.
+  const actualName = (name) => Object.keys(node.attrs ?? {}).find((key) => key.toLowerCase() === name.toLowerCase()) ?? null;
+  const setAttr = (name, value) => {
+    const existing = actualName(name);
+    const previous = existing === null ? undefined : String(node.attrs[existing]);
+    pushOps(
+      attrOp({
+        file: state.page.file,
+        version: state.page.version,
+        nodeId: node.id,
+        name: existing ?? name,
+        value,
+        previous,
+      }),
+    );
+  };
+  const currentAttr = (name) => {
+    const existing = actualName(name);
+    return existing === null ? null : String(node.attrs[existing]);
+  };
+
+  const fields = el('div', { class: 'group__grid' });
+  const addField = (label, name, helpText, placeholder) => {
+    const value = currentAttr(name);
+    const input = textInput(value ?? '', (next) => setAttr(name, next), { placeholder: placeholder ?? '' });
+    fields.append(field(label, input, helpText, actualName(name) ?? name));
+  };
+
+  const isImage = tag === 'img' || tag === 'picture' || tag === 'source';
+  if (isImage) {
+    addField('그림 주소', 'src', '이 그림 파일의 경로입니다. 프로젝트 안의 경로나 외부 URL을 적습니다.', 'assets/photo.jpg');
+    addField('대체 텍스트', 'alt', '그림을 볼 수 없을 때 대신 읽히는 설명입니다. 장식용이면 비워 둡니다.', '설명');
+    if (currentAttr('src')) {
+      fields.append(
+        field(
+          '미리보기',
+          el('img', {
+            class: 'media__thumb',
+            src: currentAttr('src'),
+            alt: currentAttr('alt') ?? '',
+            loading: 'lazy',
+          }),
+          '지금 src가 가리키는 그림입니다. 파일을 바꾸면 여기서도 바로 보입니다.',
+        ),
+      );
+    }
+  }
+
+  if (tag === 'video' || tag === 'audio' || tag === 'iframe') {
+    addField('주소', 'src', '불러올 미디어나 문서의 주소입니다.', 'media/clip.mp4');
+    addField('제목', 'title', '접근 가능한 이름입니다. 스크린 리더가 이 값을 읽습니다.', '제목');
+  }
+
+  if (icon) {
+    if (icon === node) addField('아이콘 이름', 'aria-label', '아이콘의 이름입니다. 아이콘만 있는 버튼은 이 값이 없으면 읽히지 않습니다.', '닫기');
+    if (icon.tag === 'use') {
+      addField('심볼 주소', 'href', '참조할 SVG 심볼의 주소입니다.', '#icon-close');
+    }
+    if (icon === node) {
+      // Only the element itself can carry the attribute; editing a child's
+      // viewBox through the host would write it to the wrong tag.
+      addField('viewBox', 'viewBox', 'SVG의 좌표계입니다. 보통 0 0 24 24 형태입니다.', '0 0 24 24');
+    } else {
+      fields.append(
+        field(
+          '아이콘',
+          el('span', { class: 'media__thumb media__thumb--icon', text: '▣' }),
+          `이 요소 안에 <${icon.tag}> 아이콘이 있습니다. 아이콘 자체를 고르려면 코드 위치 탭의 트리에서 선택하세요.`,
+        ),
+      );
+    }
+  }
+
+  return groupHelp(
+    icon && !isImage ? 'Icon' : 'Picture',
+    '그림·아이콘 내용을 바꿉니다. src·alt 같은 속성이 그대로 HTML에 기록되며, 저장 전까지 파일은 바뀌지 않습니다.',
+    fields,
+  );
+}
+
+/* ---- box props (rendered inside the style tab) */
 
 /*
  * Field labels are what a beginner reads, so they say the intent ("요소 배치")
  * and not the property (`display`). The CSS property name is still shown, but
  * as muted text under the control, where it teaches rather than leads.
  *
+ * These used to live in a separate "배치" tab. They are edits, and the edit
+ * tab is 스타일; the placement tab now only reports where the element ended
+ * up. Keeping one editing surface also means one place owns `styleTarget`.
+ *
  * Every `options` entry is `[value, 읽기 쉬운 이름]`. The value is what gets
  * written to the stylesheet; the label is what the menu shows.
  */
-const LAYOUT_PROPS = [
+const BOX_PROPS = [
   {
     key: 'display',
     label: '요소 배치',
@@ -1174,72 +1277,11 @@ function renderAppearancePanel() {
     );
   }
 
-  panel.replaceChildren(
-    groupHelp(
-      `Colour · text · shape · ${selector}`,
-      '이 요소의 색·글자·모양을 바꿉니다. 변경은 미리보기에 바로 보이고, Save를 눌러야 파일에 기록됩니다.',
-      controls,
-      el(
-        'p',
-        { class: 'muted' },
-        ownRule
-          ? `Editing ${ownRule.selector} in ${file}${ownRule.atRule ? ` (${ownRule.atRule})` : ''}.`
-          : `No rule yet; a new ${ruleSelector} block will be added to ${file}.`,
-      ),
-    ),
-  );
-}
-
-function renderLayoutPanel() {
-  const panel = ui.panels.layout;
-  const node = state.nodeIndex.get(state.selected);
-  if (!node) {
-    panel.replaceChildren(el('p', { class: 'empty', text: 'Select an element to edit its layout.' }));
-    return;
-  }
-  const selector = selectorForNode(node);
-  const rules = state.page.matched[node.id] ?? [];
-  const target = styleTarget(node);
-  const targetSelector = target?.selector ?? selector;
-  const ownRule =
-    rules.find((rule) => rule.file === target?.file && rule.selector === targetSelector) ??
-    (target?.selector ? null : rules[0]);
-  const file = ownRule?.file ?? target?.file ?? state.page.file;
-  const sheet = state.page.sheets.find((entry) => entry.file === file);
-  const ruleSelector = ownRule?.selector ?? targetSelector;
-  // Pending edits are the source of truth for what the field shows: without
-  // this the control snaps back to the on-disk value after every change.
-  const onDisk = ownRule ? declsOf(ownRule) : {};
-  const current = { ...onDisk, ...pendingDecls(file, ruleSelector) };
-
-  const apply = (property, value) => {
-    // Editing a field back to its on-disk value must cancel the pending op.
-    // `layoutOps` alone cannot see that: it compares against the file, not
-    // against earlier pending edits in the same session.
-    const onDiskValue = onDisk[property] ?? '';
-    if (String(value) === String(onDiskValue)) cancelPending(file, ruleSelector, property);
-    const ops = layoutOps({
-      file,
-      version: sheet?.version,
-      selector: ruleSelector,
-      decls: { [property]: value },
-      // `expect` must match the file, not the pending view, or the server
-      // rejects a second edit of the same declaration.
-      previous: onDisk,
-      create: true,
-      // The target sheet may not exist yet (page with no <link>).
-      createFile: Boolean(target?.create),
-    });
-    pushOps(ops);
-    // No re-render: replacing the panel would detach the control the user is
-    // typing in. The field keeps what was typed; `current` tracks it so the
-    // next edit in this pass builds the right ops.
-    if (value === '') delete current[property];
-    else current[property] = value;
-  };
-
-  const controls = el('div', { class: 'group__grid' });
-  for (const prop of LAYOUT_PROPS) {
+  // Box layout is the same kind of edit as colour or type: a declaration in
+  // this element's own rule. It shares this tab's target resolution, pending
+  // view and `apply` so the two groups can never disagree about the file.
+  const boxControls = el('div', { class: 'group__grid' });
+  for (const prop of BOX_PROPS) {
     const property = prop.property ?? prop.key;
     const value = current[property] ?? '';
     const input = prop.options
@@ -1251,64 +1293,176 @@ function renderLayoutPanel() {
           (next) => apply(property, next),
         )
       : numberInput(value, (next) => apply(property, next));
-    // The raw property name sits under the control: it teaches the CSS word
-    // without making the beginner read it first.
-    controls.append(field(prop.label, input, prop.help, property));
+    boxControls.append(field(prop.label, input, prop.help, property));
   }
 
-  const ruleList = el('div', { class: 'group' });
-  for (const rule of rules) {
-    const decls = el('div', { class: 'rule__decls' });
-    for (const decl of rule.decls) {
-      decls.append(el('div', { text: `${decl.property}: ${decl.value};` }));
-    }
-    ruleList.append(
-      el(
-        'div',
-        { class: 'rule' },
-        el('div', { class: 'rule__head' }, el('span', { text: rule.selector }), el('span', { class: 'rule__file', text: rule.file })),
-        rule.atRule ? el('div', { class: 'rule__file', text: rule.atRule }) : null,
-        decls,
-      ),
-    );
-  }
+  const editingNote = el(
+    'p',
+    { class: 'muted' },
+    ownRule
+      ? `Editing ${ownRule.selector} in ${file}${ownRule.atRule ? ` (${ownRule.atRule})` : ''}.`
+      : `No rule yet; a new ${ruleSelector} block will be added to ${file}.`,
+  );
 
-  // Empty sections are noise: "Matching rules (0)" and a token list with
-  // nothing in it tell the user nothing, so they are not rendered at all.
-  const tokenCount = state.page.tokens.reduce((total, entry) => total + entry.tokens.length, 0);
-  const sections = [
+  panel.replaceChildren(
     groupHelp(
-      `Box model · ${selector}`,
-      '선택한 요소의 레이아웃 값입니다. 변경은 이 요소를 실제로 꾸미는 CSS 규칙에 기록됩니다.',
+      `Colour · text · shape · ${selector}`,
+      '이 요소의 색·글자·모양을 바꿉니다. 변경은 미리보기에 바로 보이고, Save를 눌러야 파일에 기록됩니다.',
       controls,
+    ),
+    groupHelp(
+      `Box · placement · ${selector}`,
+      '이 요소를 어떤 방식으로 배치하고, 간격·여백·정렬을 어떻게 줄지 정합니다. 색·글자와 같은 CSS 규칙에 기록됩니다.',
+      boxControls,
+      editingNote,
+    ),
+  );
+}
+
+/**
+ * Placement tab: where the element actually ended up, not what to write.
+ *
+ * Everything here is measured in the live preview (`describeGeometry` in the
+ * bridge) because the source model has no layout: a `grid` row that resolved
+ * to 180px, an element pushed out of flow by `position: fixed`, or the share of
+ * the page it covers can only be answered by the rendered document.
+ *
+ * Read-only on purpose. The controls that change these values live in 스타일,
+ * so this tab never has to guess which rule it is describing.
+ */
+function renderLayoutPanel() {
+  const panel = ui.panels.layout;
+  const node = state.nodeIndex.get(state.selected);
+  if (!node) {
+    panel.replaceChildren(el('p', { class: 'empty', text: 'Select an element to see where it sits on the page.' }));
+    return;
+  }
+
+  const area = frameAreaOf(node);
+  const areas = frameAreas(state.page);
+  const geometry = state.geometry;
+  const selector = selectorForNode(node);
+
+  if (!geometry) {
+    panel.replaceChildren(
+      el('p', { class: 'empty', text: `Measuring ${selector ?? node.tag}…` }),
+      el('p', { class: 'muted', text: '미리보기가 준비되면 페이지 기준 위치와 크기가 여기에 나옵니다.' }),
+    );
+    return;
+  }
+
+  const percent = (part, whole) => (whole ? `${Math.round((part / whole) * 100)}%` : '—');
+  const inFlow = geometry.position === 'static' || geometry.position === 'relative';
+  const rows = el(
+    'dl',
+    { class: 'kv' },
+    el('dt', { text: '페이지 위치' }),
+    el('dd', {
+      class: 'mono',
+      text: `x ${geometry.x}px · y ${geometry.y}px (페이지의 ${percent(geometry.y, geometry.pageHeight)} 지점)`,
+    }),
+    el('dt', { text: '크기' }),
+    el('dd', {
+      class: 'mono',
+      text: `${geometry.width} × ${geometry.height}px · 너비 ${percent(geometry.width, geometry.pageWidth)}`,
+    }),
+    el('dt', { text: '페이지' }),
+    el('dd', { class: 'mono', text: `${geometry.pageWidth} × ${geometry.pageHeight}px` }),
+    el('dt', { text: '흐름' }),
+    el('dd', {
+      text: `${inFlow ? '문서 흐름 안' : '문서 흐름 밖'} · position: ${geometry.position}`,
+    }),
+    el('dt', { text: '표시 방식' }),
+    el('dd', { class: 'mono', text: geometry.display }),
+    el('dt', { text: '골격 영역' }),
+    el('dd', {
+      text: area
+        ? `${area} 영역 안`
+        : areas.size
+          ? '골격 영역 밖 (페이지 본문)'
+          : '적용된 골격 없음',
+    }),
+    el('dt', { text: '부모' }),
+    el('dd', { class: 'mono', text: geometry.parent ?? '—' }),
+  );
+  if (geometry.offsetParent) {
+    rows.append(el('dt', { text: '위치 기준' }), el('dd', { class: 'mono', text: geometry.offsetParent }));
+  }
+  if (geometry.zIndex !== null) {
+    rows.append(el('dt', { text: 'z-index' }), el('dd', { class: 'mono', text: String(geometry.zIndex) }));
+  }
+
+  // One section: the readout and the "where to change it" note say the same
+  // thing about the same values, and a second heading for one sentence pushed
+  // the numbers off the first screen.
+  panel.replaceChildren(
+    groupHelp(
+      `Placement · ${selector}`,
+      '선택한 요소가 페이지의 어디에, 어떤 방식으로 놓여 있는지 실제 미리보기에서 잰 값입니다. 읽기 전용입니다.',
+      rows,
       el(
         'p',
         { class: 'muted' },
-        ownRule
-          ? `Editing ${ownRule.selector} in ${file}${ownRule.atRule ? ` (${ownRule.atRule})` : ''}.`
-          : `No rule yet; a new ${ruleSelector} block will be added to ${file}.`,
+        '바꾸려면 스타일 탭의 "Box · placement" 그룹을 쓰세요. display·gap·padding·정렬은 같은 CSS 규칙에 기록됩니다.',
       ),
     ),
-  ];
-  if (rules.length) {
-    sections.push(
-      groupHelp(`Matching rules (${rules.length})`, '이 요소에 적용 중인 규칙입니다. 어느 파일의 어느 선택자인지 함께 표시합니다.', ruleList),
-    );
+  );
+}
+
+/** `layout__header` → `header`, for the nearest ancestor that carries one. */
+function frameAreaOf(node) {
+  const parents = state.pageParents;
+  if (!parents) return null;
+  let current = node;
+  while (current) {
+    for (const name of current.classes ?? []) {
+      const match = /^layout__(.+)$/.exec(name);
+      if (match) return match[1];
+    }
+    current = parents.get(current.id) ?? null;
   }
-  if (tokenCount) {
-    sections.push(
-      groupHelp(
-        'Design tokens',
-        '이 페이지의 CSS 변수(커스텀 프로퍼티) 값입니다. 색·간격을 한 곳에서 바꿀 때 씁니다.',
-        el(
-          'div',
-          { class: 'rule__decls' },
-          ...state.page.tokens.flatMap((entry) => entry.tokens.map((token) => el('div', { text: `${token.name}: ${token.value}` }))),
-        ),
-      ),
-    );
+  return null;
+}
+
+/**
+ * The frame preset the page already uses, detected from its markup.
+ *
+ * Detection reads the `layout__*` classes actually present, so a hand-written
+ * frame (not inserted by this studio) still reports its shape. Matching on the
+ * full area set keeps two presets that share `main` from being confused.
+ */
+function detectFrame(page) {
+  const present = frameAreas(page);
+  if (!present.size) return null;
+  // Exact set equality, not "contains": the holy-grail markup also contains
+  // header/main/footer, so a subset test would report the simpler preset and
+  // then draw a wireframe that does not match the page.
+  return (
+    FRAME_PRESETS.find((preset) => {
+      const names = new Set(preset.areas.map((area) => area.name));
+      return names.size === present.size && [...names].every((name) => present.has(name));
+    }) ?? null
+  );
+}
+
+/**
+ * The `layout__*` area names the page currently defines, at any depth.
+ *
+ * Empty means the page has no frame at all; non-empty with no preset match
+ * means a hand-written skeleton, which the panels must not call "없음".
+ */
+function frameAreas(page) {
+  const present = new Set();
+  if (!page) return present;
+  const layout = flatten(page.tree).find(({ node }) => node.classes?.includes('layout'));
+  if (!layout) return present;
+  for (const { node } of flatten(layout.node)) {
+    for (const name of node.classes ?? []) {
+      const match = /^layout__(.+)$/.exec(name);
+      if (match) present.add(match[1]);
+    }
   }
-  panel.replaceChildren(...sections);
+  return present;
 }
 
 /* ---- component panel */
@@ -1486,7 +1640,33 @@ function renderStructurePanel() {
   // would be visible next to every tab.
   ui.treeHost.hidden = false;
 
+  // The tab is called 코드 위치, so the first thing it shows is where the
+  // selected element is written. It used to be buried in the 내용 tab, which
+  // left the tab's own name describing only the tree.
+  const location = node
+    ? groupHelp(
+        'Code location',
+        '선택한 요소가 어느 파일의 몇 번째 줄에 적혀 있는지 보여줍니다. 이 위치를 기준으로 아래 삽입·이동·복제·삭제가 이루어집니다.',
+        el(
+          'dl',
+          { class: 'kv' },
+          el('dt', { text: 'file' }),
+          el('dd', { class: 'mono', text: page.file }),
+          el('dt', { text: 'line' }),
+          el('dd', { class: 'mono', text: String(node.line) }),
+          el('dt', { text: 'selector' }),
+          el('dd', { class: 'mono', text: selectorForNode(node) ?? '—' }),
+          el('dt', { text: 'tag' }),
+          el('dd', {
+            class: 'mono',
+            text: `<${node.tag}${node.domId ? `#${node.domId}` : ''}${node.classes.length ? `.${node.classes.join('.')}` : ''}>`,
+          }),
+        ),
+      )
+    : null;
+
   panel.replaceChildren(
+    ...(location ? [location] : []),
     treeSection,
     groupHelp(
       'Insert',
@@ -1601,14 +1781,17 @@ function renderStructurePanel() {
   );
 }
 
-/* ---- project panel */
+/* ---- project dialog */
 
 /**
  * What the bootstrap collected about this frontend: stack, file counts, design
  * tokens, and — most usefully — which files the editor cannot rewrite and why.
+ *
+ * Rendered into a modal, not a tab: it describes the folder, not the selected
+ * element, so it is not one of the element's settings.
  */
 function renderProjectPanel() {
-  const panel = ui.panels.project;
+  const panel = ui.projectBody;
   const profile = state.profile;
   if (!profile) {
     panel.replaceChildren(el('p', { class: 'empty', text: 'Scanning the project…' }));
@@ -1729,7 +1912,10 @@ function renderPageLayoutPanel() {
     return;
   }
 
+  const applied = detectFrame(page);
+
   const cards = FRAME_PRESETS.map((preset) => {
+    const isApplied = applied?.id === preset.id;
     const thumb = el('button', {
       type: 'button',
       class: 'wire',
@@ -1752,9 +1938,15 @@ function renderPageLayoutPanel() {
         class: 'layout-card',
         'data-preset': preset.id,
         'data-active': String(state.previewFrame === preset.id),
+        'data-applied': String(isApplied),
       },
       thumb,
-      el('div', { class: 'layout-card__head' }, el('span', { class: 'layout-card__name', text: preset.name })),
+      el(
+        'div',
+        { class: 'layout-card__head' },
+        el('span', { class: 'layout-card__name', text: preset.name }),
+        isApplied ? el('span', { class: 'chip chip--applied', text: '적용됨' }) : null,
+      ),
       el('p', { class: 'muted', text: preset.description }),
       el(
         'div',
@@ -1762,8 +1954,12 @@ function renderPageLayoutPanel() {
         el('button', {
           class: 'btn',
           type: 'button',
-          text: '적용',
-          title: '이 골격으로 페이지를 감쌉니다. Save 전까지 파일은 그대로입니다.',
+          text: isApplied ? '다시 적용' : '적용',
+          // Applying the same preset again would nest a second frame inside the
+          // first, which is almost never what someone means.
+          title: isApplied
+            ? '이미 이 골격을 쓰고 있습니다. 다시 적용하면 골격이 한 겹 더 들어갑니다.'
+            : '이 골격으로 페이지를 감쌉니다. Save 전까지 파일은 그대로입니다.',
           onclick: () => applyFrame(preset),
         }),
       ),
@@ -2026,6 +2222,9 @@ function renderPending() {
       return;
     }
     postToBridge({ type: 'live', ...liveChanges() });
+    // A live declaration can move or resize the element (padding, display),
+    // so the placement numbers are stale the moment it is applied.
+    if (state.tab === 'layout') requestGeometry();
   }
 }
 
@@ -2154,11 +2353,12 @@ async function loadProject() {
   const project = inlineBoot() ?? (await api('project'));
   state.project = project;
   // The profile is a second, slower scan (every page and stylesheet is
-  // re-read). Load the editor first, then fill the Project tab when it lands.
+  // re-read). Load the editor first, then fill the Project dialog when it
+  // lands, but only if the user opened it in the meantime.
   api('profile')
     .then((profile) => {
       state.profile = profile;
-      if (state.tab === 'project') renderProjectPanel();
+      if (ui.projectDialog.open) renderProjectPanel();
     })
     .catch(() => {
       state.profile = null;
@@ -2221,6 +2421,14 @@ const NON_RENDERED_TAGS = new Set([
   'template',
 ]);
 
+// Kept in sync with `VOID` in `tools/scan/html.mjs`: the scanner is the
+// authority on what has no end tag, and an editor must not offer text for a
+// node that cannot hold any.
+const VOID_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+  'link', 'meta', 'param', 'source', 'track', 'wbr',
+]);
+
 function tabAvailability(node) {
   const tag = node?.tag;
   const isComponent = node?.component?.kind === 'foundation' || node?.component?.kind === 'component';
@@ -2235,7 +2443,6 @@ function tabAvailability(node) {
     structure: true,
     // Page-level, so it does not depend on what is selected.
     pageLayout: true,
-    project: true,
   };
 }
 
@@ -2282,11 +2489,15 @@ function showTab(requested) {
   syncSkeleton(name);
   if (name === 'appearance') renderAppearancePanel();
   if (name === 'node') renderNodePanel();
-  if (name === 'layout') renderLayoutPanel();
+  if (name === 'layout') {
+    // Render the "measuring…" state first, then ask the frame. The reply
+    // re-renders this tab with real numbers.
+    renderLayoutPanel();
+    requestGeometry();
+  }
   if (name === 'component') renderComponentPanel();
   if (name === 'structure') renderStructurePanel();
   if (name === 'pageLayout') renderPageLayoutPanel();
-  if (name === 'project') renderProjectPanel();
 }
 
 for (const [name, tab] of Object.entries(ui.tabs)) {
@@ -2366,6 +2577,13 @@ window.addEventListener('message', (event) => {
     const label = nodeLabel(state.nodeIndex.get(data.nodeId) ?? { tag: 'element' });
     setStatus(`Moved ${label} ${data.position} another element — Save to write it`);
   }
+  // Placement readout: measured in the live frame, so it is the only source
+  // for resolved sizes and positions. Re-render only this tab; a geometry
+  // reply must never trigger another measure or the two would ping-pong.
+  if (data.type === 'geometry') {
+    state.geometry = data.geometry ?? null;
+    if (state.tab === 'layout') renderLayoutPanel();
+  }
   if (data.type === 'ready') {
     postToBridge({ type: 'picking', value: state.picking });
     // A reloaded frame starts clean; replay the pending set so the preview
@@ -2373,6 +2591,7 @@ window.addEventListener('message', (event) => {
     postToBridge({ type: 'live', ...liveChanges() });
     syncSkeleton(state.tab);
     if (state.selected) postToBridge({ type: 'select', id: state.selected });
+    if (state.tab === 'layout') requestGeometry();
     // A structural edit reloads the document; put the user back where they
     // were looking instead of jumping to the top on every drop.
     if (state.previewScroll) {
@@ -2561,7 +2780,8 @@ async function switchProject(dir) {
     state.selected = null;
     state.pending = [];
     state.nodeIndex = new Map();
-    state.treeIndex = new Map();
+    state.pageParents = null;
+    state.geometry = null;
     renderPending();
     localStorage.removeItem('hf-studio:selection');
     ui.root.textContent = project.root;
@@ -2576,12 +2796,12 @@ async function switchProject(dir) {
     await loadPage(project.pages[0].file, { keepSelection: false });
     const history = await api('history');
     ui.undo.disabled = history.snapshots.length === 0;
-    if (state.tab === 'project') renderProjectPanel();
+    if (ui.projectDialog.open) renderProjectPanel();
     setStatus(`Opened ${project.root}`, 'ok');
     api('profile')
       .then((profile) => {
         state.profile = profile;
-        if (state.tab === 'project') renderProjectPanel();
+        if (ui.projectDialog.open) renderProjectPanel();
       })
       .catch(() => {
         state.profile = null;
@@ -2593,6 +2813,10 @@ async function switchProject(dir) {
   }
 }
 
+ui.projectButton.addEventListener('click', () => {
+  renderProjectPanel();
+  ui.projectDialog.showModal();
+});
 ui.openProject.addEventListener('click', openPicker);
 ui.pickerUp.addEventListener('click', async () => {
   // `parent` is null at the root containing the current path; disabled there.

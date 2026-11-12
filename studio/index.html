@@ -5,10 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>web-page-helper studio</title>
     <link rel="stylesheet" href="/__studio/studio.css" />
-    <!-- panel.js imports these two; naming them here turns three serial waves
-         (panel -> ops/suggest) into one request wave on a high-latency link. -->
+    <!-- Named here so the panel's import does not add a serial wave on a
+         high-latency link. -->
     <link rel="modulepreload" href="/__studio/ops.js" />
-    <link rel="modulepreload" href="/__studio/suggest.js" />
   </head>
   <body>
     <div class="shell">
@@ -24,6 +23,10 @@
             <span>Page</span>
             <select id="page-select" aria-label="Page to edit"></select>
           </label>
+          <!-- Project facts are not an editing tab: they describe the folder,
+               not the selected element, and a tab that never goes away pushed
+               the six settings tabs into a scroll. -->
+          <button type="button" class="btn btn--ghost" id="project-btn" title="Project inventory: stack, pages, stylesheets, blocked files">Project</button>
           <label class="pick pick--topbar">
             <input type="checkbox" id="pick-toggle" checked />
             <span>미리보기에서 바로 선택</span>
@@ -49,12 +52,11 @@
         <aside class="pane pane--panel" aria-label="Settings">
           <div class="tabs" role="tablist" aria-label="Settings sections">
             <button role="tab" id="tab-appearance" aria-controls="panel-appearance" aria-selected="true">스타일<span class="help" role="img" aria-label="글자 색·크기·배경·모서리 둥글기를 바꿉니다. 초보자가 가장 먼저 쓰는 설정입니다." title="글자 색·크기·배경·모서리 둥글기를 바꿉니다. 초보자가 가장 먼저 쓰는 설정입니다." tabindex="0">?</span></button>
-            <button role="tab" id="tab-layout" aria-controls="panel-layout" aria-selected="false">배치<span class="help" role="img" aria-label="요소를 가로·세로로 놓고, 간격과 여백을 정합니다. 위치 조정은 여기서 합니다." title="요소를 가로·세로로 놓고, 간격과 여백을 정합니다. 위치 조정은 여기서 합니다." tabindex="0">?</span></button>
-            <button role="tab" id="tab-node" aria-controls="panel-node" aria-selected="false">내용<span class="help" role="img" aria-label="글자 내용과 HTML 속성(id·class·role 등)을 직접 편집합니다." title="글자 내용과 HTML 속성(id·class·role 등)을 직접 편집합니다." tabindex="0">?</span></button>
-            <button role="tab" id="tab-page-layout" aria-controls="panel-page-layout" aria-selected="false">레이아웃<span class="help" role="img" aria-label="페이지 전체 골격(헤더·사이드바·본문·푸터)을 고릅니다. 이 탭에서는 미리보기의 실제 내용이 숨고 골격만 보입니다." title="페이지 전체 골격(헤더·사이드바·본문·푸터)을 고릅니다. 이 탭에서는 미리보기의 실제 내용이 숨고 골격만 보입니다." tabindex="0">?</span></button>
-            <button role="tab" id="tab-structure" aria-controls="panel-structure" aria-selected="false">구조<span class="help" role="img" aria-label="페이지 전체 트리를 보며 요소를 넣고·옮기고·복제·삭제합니다." title="페이지 전체 트리를 보며 요소를 넣고·옮기고·복제·삭제합니다." tabindex="0">?</span></button>
+            <button role="tab" id="tab-layout" aria-controls="panel-layout" aria-selected="false">배치<span class="help" role="img" aria-label="선택한 요소가 페이지 어디에, 어떤 방식으로 놓여 있는지 보여줍니다. 읽기 전용입니다." title="선택한 요소가 페이지 어디에, 어떤 방식으로 놓여 있는지 보여줍니다. 읽기 전용입니다." tabindex="0">?</span></button>
+            <button role="tab" id="tab-node" aria-controls="panel-node" aria-selected="false">내용<span class="help" role="img" aria-label="글자·그림·아이콘 내용과 HTML 속성(id·class·role 등)을 직접 편집합니다." title="글자·그림·아이콘 내용과 HTML 속성(id·class·role 등)을 직접 편집합니다." tabindex="0">?</span></button>
+            <button role="tab" id="tab-page-layout" aria-controls="panel-page-layout" aria-selected="false">페이지 레이아웃<span class="help" role="img" aria-label="페이지 전체 골격(헤더·사이드바·본문·푸터)을 고르고, 지금 적용된 구조를 확인합니다. 이 탭에서는 미리보기의 실제 내용이 숨고 골격만 보입니다." title="페이지 전체 골격(헤더·사이드바·본문·푸터)을 고르고, 지금 적용된 구조를 확인합니다. 이 탭에서는 미리보기의 실제 내용이 숨고 골격만 보입니다." tabindex="0">?</span></button>
+            <button role="tab" id="tab-structure" aria-controls="panel-structure" aria-selected="false">코드 위치<span class="help" role="img" aria-label="선택한 요소가 어느 파일 몇 번째 줄에 있는지 보여주고, 요소를 넣고·옮기고·복제·삭제합니다." title="선택한 요소가 어느 파일 몇 번째 줄에 있는지 보여주고, 요소를 넣고·옮기고·복제·삭제합니다." tabindex="0">?</span></button>
             <button role="tab" id="tab-component" aria-controls="panel-component" aria-selected="false">컴포넌트<span class="help" role="img" aria-label="헤드리스 파운데이션의 옵션이나 유저 컴포넌트의 props를 폼으로 설정합니다." title="헤드리스 파운데이션의 옵션이나 유저 컴포넌트의 props를 폼으로 설정합니다." tabindex="0">?</span></button>
-            <button role="tab" id="tab-project" aria-controls="panel-project" aria-selected="false">프로젝트<span class="help" role="img" aria-label="프로젝트 구성·페이지 목록·디자인 토큰·편집이 막힌 이유를 보여줍니다." title="프로젝트 구성·페이지 목록·디자인 토큰·편집이 막힌 이유를 보여줍니다." tabindex="0">?</span></button>
           </div>
 
           <div class="panel" id="panel-appearance" role="tabpanel" aria-labelledby="tab-appearance">
@@ -74,7 +76,6 @@
             <div class="pane__foot" id="tree-status"></div>
           </div>
           <div class="panel" id="panel-component" role="tabpanel" aria-labelledby="tab-component" hidden></div>
-          <div class="panel" id="panel-project" role="tabpanel" aria-labelledby="tab-project" hidden></div>
 
           <div class="pending" id="pending" hidden>
             <div class="pending__head">
@@ -122,6 +123,19 @@
         <footer class="diff__foot">
           <span id="picker-note" class="muted"></span>
           <button type="button" class="btn btn--primary" id="picker-open" disabled>Open this folder</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="project-dialog" class="diff project-dialog">
+      <form method="dialog" class="diff__form">
+        <header class="diff__head">
+          <h2>Project</h2>
+          <button class="btn btn--ghost btn--sm" value="cancel">Close</button>
+        </header>
+        <div class="diff__body project-dialog__body" id="project-body"></div>
+        <footer class="diff__foot">
+          <span class="muted">Read-only inventory of the open folder.</span>
         </footer>
       </form>
     </dialog>

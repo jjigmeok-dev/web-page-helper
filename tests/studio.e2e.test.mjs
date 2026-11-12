@@ -145,8 +145,8 @@ test('e2e: pick in the preview, edit layout, confirm the diff, verify disk', asy
     await frame.locator('.page__lede').click();
     await page.waitForFunction(() => document.querySelector('#node-path').textContent.includes('.page__lede'));
 
-    await page.click('#tab-layout');
-    const padding = page.locator('#panel-layout label.field', { hasText: 'padding' }).locator('input');
+    await page.click('#tab-appearance');
+    const padding = page.locator('#panel-appearance label.field', { hasText: 'padding' }).locator('input');
     await padding.fill('1rem 0');
     await padding.dispatchEvent('change');
     await page.waitForSelector('#pending-list li');
@@ -517,9 +517,9 @@ test('e2e: edits show in the preview before saving, and discard reverts them', a
     const frame = page.frameLocator('#preview');
     await frame.locator('.page__lede').click();
     await page.waitForFunction(() => document.querySelector('#node-path').textContent.includes('.page__lede'));
-    await page.click('#tab-layout');
+    await page.click('#tab-appearance');
 
-    const gap = page.locator('#panel-layout label.field', { hasText: 'gap' }).locator('input');
+    const gap = page.locator('#panel-appearance label.field', { hasText: 'gap' }).locator('input');
     await gap.fill('7px');
     await gap.dispatchEvent('change');
 
@@ -567,9 +567,9 @@ test('e2e: a field returned to its disk value drops the pending change', async (
     const frame = page.frameLocator('#preview');
     await frame.locator('.page__lede').click();
     await page.waitForFunction(() => document.querySelector('#node-path').textContent.includes('.page__lede'));
-    await page.click('#tab-layout');
+    await page.click('#tab-appearance');
 
-    const gap = page.locator('#panel-layout label.field', { hasText: 'gap' }).locator('input');
+    const gap = page.locator('#panel-appearance label.field', { hasText: 'gap' }).locator('input');
     await gap.fill('7px');
     await gap.dispatchEvent('change');
     await page.waitForSelector('#pending-list li');
@@ -795,8 +795,16 @@ test('e2e: every section title and field has a Korean help icon', async (t) => {
       await page.waitForTimeout(150);
     };
 
-    // Layout: the field-heaviest panel.
+    // Style: the field-heaviest panel (colour, type, and the box group).
     await select('.page__lede');
+    await page.waitForSelector('#tab-appearance:not([hidden])');
+    await page.click('#tab-appearance');
+    const styleAudit = await auditPanel();
+    check(styleAudit);
+    assert.ok(styleAudit.fields.some((field) => field.label.includes('안쪽 여백')), 'box controls live in the style tab');
+
+    // Placement: read-only measurements, so there are no fields to audit, but
+    // the section headings must still explain themselves.
     await page.waitForSelector('#tab-layout:not([hidden])');
     await page.click('#tab-layout');
     check(await auditPanel());
@@ -811,9 +819,24 @@ test('e2e: every section title and field has a Korean help icon', async (t) => {
     await page.click('#tab-structure');
     check(await auditPanel());
 
-    // Project: summary sections.
-    await page.click('#tab-project');
-    check(await auditPanel());
+    // Project: summary sections, now in a dialog instead of a tab.
+    await page.click('#project-btn');
+    await page.waitForSelector('#project-dialog[open]');
+    const projectAudit = await page.evaluate(() => {
+      const body = document.querySelector('#project-body');
+      return {
+        titles: [...body.querySelectorAll('.group__title')].map((title) => ({
+          text: title.textContent,
+          help: title.querySelector('.help')?.getAttribute('title') ?? '',
+        })),
+        fields: [...body.querySelectorAll('.field')].map((field) => ({
+          label: field.querySelector('.field__label')?.textContent ?? '',
+          help: field.querySelector('.field__label .help')?.getAttribute('title') ?? '',
+        })),
+      };
+    });
+    check({ id: 'project-dialog', ...projectAudit });
+    await page.click('#project-dialog .diff__head button');
   } finally {
     await studio.close();
     await browser.close();
