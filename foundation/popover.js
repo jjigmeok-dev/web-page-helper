@@ -1,4 +1,4 @@
-import { KEY, emit, needsId, options, part, setState, trapTab } from './core.js';
+import { KEY, emit, needsId, options, part, setState, trapTab, nonSubmit } from './core.js';
 import { capabilities, createLayer } from './layer.js';
 
 /**
@@ -40,7 +40,7 @@ export const meta = {
 };
 
 export function mount(root) {
-  const trigger = part(root, 'trigger');
+  const trigger = nonSubmit(part(root, 'trigger'));
   const content = part(root, 'content');
   if (!trigger || !content) throw new Error('[hf] popover needs [data-hf-part="trigger"] and [data-hf-part="content"]');
   const opts = options(root, meta.options);

@@ -1,4 +1,4 @@
-import { KEY, emit, isDisabled, needsId, options, part, parts, setState } from './core.js';
+import { KEY, emit, isDisabled, needsId, options, part, parts, setState, typeahead, labelOf as coreLabelOf, nonSubmit } from './core.js';
 import { capabilities, createLayer } from './layer.js';
 
 /**
@@ -41,11 +41,14 @@ export const meta = {
 };
 
 export function mount(root, { labelOf, typeahead: makeTypeahead } = {}) {
-  const trigger = part(root, 'trigger');
+  const trigger = nonSubmit(part(root, 'trigger'));
   const list = part(root, 'list');
   if (!trigger || !list) throw new Error('[hf] menu needs [data-hf-part="trigger"] and [data-hf-part="list"]');
   const opts = options(root, meta.options);
-  const items = () => parts(root, 'item');
+  // Items are re-read on every open (the caller may add some), so mark the
+  // ones present at mount too: a menu item must never be a submit button.
+  const items = () => parts(root, 'item').map(nonSubmit);
+  items();
 
   trigger.setAttribute('aria-haspopup', 'menu');
   trigger.setAttribute('aria-expanded', 'false');
@@ -66,8 +69,11 @@ export function mount(root, { labelOf, typeahead: makeTypeahead } = {}) {
   let destroyed = false;
   let reason = null;
 
-  const search = makeTypeahead
-    ? makeTypeahead((text) => items().findIndex((item) => (labelOf ? labelOf(item) : item.textContent.trim().toLowerCase()).startsWith(text)))
+  // Helpers are optional (see `mount(root, helpers?)`); fall back to core.
+  const buildTypeahead = makeTypeahead ?? typeahead;
+  const readLabel = (item) => (labelOf ? labelOf(item) : coreLabelOf(item));
+  const search = opts.typeahead
+    ? buildTypeahead((text) => items().findIndex((item) => readLabel(item).startsWith(text)))
     : null;
 
   function focusItem(index) {

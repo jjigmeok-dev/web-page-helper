@@ -1,4 +1,4 @@
-import { KEY, emit, isDisabled, needsId, options, part, parts, setState } from './core.js';
+import { KEY, emit, isDisabled, needsId, options, part, parts, setState, nonSubmit } from './core.js';
 
 /**
  * Tabs: a tablist of tabs controlling sibling panels.
@@ -29,7 +29,7 @@ export const meta = {
 
 export function mount(root) {
   const list = part(root, 'list');
-  const tabs = parts(root, 'tab');
+  const tabs = parts(root, 'tab').map(nonSubmit);
   const panels = parts(root, 'panel');
   if (!list || !tabs.length) throw new Error('[hf] tabs needs [data-hf-part="list"] and at least one [data-hf-part="tab"]');
 

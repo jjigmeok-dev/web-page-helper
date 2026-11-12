@@ -1,4 +1,4 @@
-import { KEY, emit, isDisabled, options, part, parts, roving, setState } from './core.js';
+import { KEY, emit, isDisabled, options, part, parts, roving, setState, nonSubmit } from './core.js';
 
 /**
  * Radio group: exclusive selection with roving tabindex.
@@ -21,7 +21,7 @@ export const meta = {
 };
 
 export function mount(root) {
-  const radios = parts(root, 'radio');
+  const radios = parts(root, 'radio').map(nonSubmit);
   if (!radios.length) throw new Error('[hf] radio-group needs [data-hf-part="radio"] elements');
   const opts = options(root, meta.options);
   const vertical = opts.orientation === 'vertical';

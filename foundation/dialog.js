@@ -1,4 +1,4 @@
-import { emit, needsId, options, part, parts, setState } from './core.js';
+import { emit, needsId, options, part, parts, setState, nonSubmit } from './core.js';
 
 /**
  * Dialog: modal or non-modal layer over the page.
@@ -83,7 +83,7 @@ export function mount(root) {
     root.close('backdrop');
   };
 
-  const offs = parts(root, 'close').map((button) => {
+  const offs = parts(root, 'close').map(nonSubmit).map((button) => {
     const onClickClose = () => root.close('close');
     button.addEventListener('click', onClickClose);
     return () => button.removeEventListener('click', onClickClose);

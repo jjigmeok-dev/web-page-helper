@@ -65,6 +65,10 @@ const state = {
   previewUrl: null,
   // Scroll offset to restore across a preview reload.
   previewScroll: 0,
+  // Page layout tab: the preset whose skeleton the preview is drawing, or
+  // null when the preview shows the real page. The preview is not edited to do
+  // this — the bridge paints the skeleton over a hidden page.
+  previewFrame: null,
   busy: false,
 };
 
@@ -75,6 +79,7 @@ const ui = {
   previewUrl: $('#preview-url'),
   previewHint: $('#preview-hint'),
   tree: $('#tree'),
+  treeHost: $('#tree-host'),
   treeStatus: $('#tree-status'),
   status: $('#status'),
   statusbar: $('.statusbar'),
@@ -104,6 +109,7 @@ const ui = {
     layout: $('#panel-layout'),
     component: $('#panel-component'),
     structure: $('#panel-structure'),
+    pageLayout: $('#panel-page-layout'),
     project: $('#panel-project'),
   },
   tabs: {
@@ -112,6 +118,7 @@ const ui = {
     layout: $('#tab-layout'),
     component: $('#tab-component'),
     structure: $('#tab-structure'),
+    pageLayout: $('#tab-page-layout'),
     project: $('#tab-project'),
   },
 };
@@ -293,6 +300,21 @@ function postToBridge(message) {
   ui.preview.contentWindow?.postMessage({ source: 'hf-studio', ...message }, '*');
 }
 
+/**
+ * Tells the preview whether to draw a wireframe instead of the page.
+ *
+ * The default skeleton is the preset matching what the page already uses; if
+ * unknown, the first preset, so opening the tab always shows something.
+ */
+function syncSkeleton(tabName) {
+  const active = tabName === 'pageLayout';
+  const preset = active
+    ? (FRAME_PRESETS.find((entry) => entry.id === state.previewFrame) ?? FRAME_PRESETS[0])
+    : null;
+  if (preset) state.previewFrame = preset.id;
+  postToBridge({ type: 'skeleton', areas: preset ? preset.areas : null });
+}
+
 /* ------------------------------------------------------------ preview */
 
 /**
@@ -418,13 +440,22 @@ function groupHelp(title, helpText, ...children) {
   );
 }
 
-function field(label, input, helpText = null) {
-  return el(
-    'label',
-    { class: 'field' },
+/**
+ * One labelled control.
+ *
+ * `property` (optional) is the CSS property this field writes. It is rendered
+ * as muted `code` under the control so the beginner can learn the real name
+ * without having to decode it to use the panel.
+ */
+function field(label, input, helpText = null, property = null) {
+  const parts = [
     el('span', { class: 'field__label' }, el('span', { text: label }), helpText ? help(helpText) : null),
     input,
-  );
+  ];
+  // Its own line under the control: sharing the label's line wraps both in a
+  // narrow inspector column, and the property name is reference text anyway.
+  if (property) parts.push(el('code', { class: 'field__prop', text: property }));
+  return el('label', { class: 'field' }, ...parts);
 }
 
 function textInput(value, onCommit, attrs = {}) {
@@ -855,41 +886,80 @@ function renderSuggestions(node) {
 
 /* ---- layout panel */
 
+/*
+ * Field labels are what a beginner reads, so they say the intent ("요소 배치")
+ * and not the property (`display`). The CSS property name is still shown, but
+ * as muted text under the control, where it teaches rather than leads.
+ *
+ * Every `options` entry is `[value, 읽기 쉬운 이름]`. The value is what gets
+ * written to the stylesheet; the label is what the menu shows.
+ */
 const LAYOUT_PROPS = [
   {
     key: 'display',
-    label: 'display',
-    help: '요소가 화면에 어떻게 배치될지 정합니다. flex는 1차원 정렬, grid는 2차원 배치에 씁니다.',
-    options: ['', 'block', 'flex', 'grid', 'inline-flex', 'inline-grid', 'inline', 'inline-block', 'none'],
+    label: '요소 배치',
+    help: '이 요소가 화면에서 어떤 방식으로 늘어놓일지 정합니다. 보통은 "한 줄로 나란히"나 "격자로"를 고릅니다.',
+    options: [
+      ['', '— 그대로 두기 —'],
+      ['block', '위아래로 쌓기 (block)'],
+      ['flex', '한 줄로 나란히 (flex)'],
+      ['grid', '격자로 배치 (grid)'],
+      ['inline-block', '글자처럼 옆에 붙이기 (inline-block)'],
+      ['inline', '글자 흐름에 넣기 (inline)'],
+      ['inline-flex', '글자처럼 옆에 붙인 한 줄 (inline-flex)'],
+      ['inline-grid', '글자처럼 옆에 붙인 격자 (inline-grid)'],
+      ['none', '화면에서 숨기기 (none)'],
+    ],
   },
   {
     key: 'direction',
     property: 'flex-direction',
-    label: 'flex-direction',
-    help: 'flex 자식이 놓이는 방향입니다. row는 가로, column은 세로입니다.',
-    options: ['', 'row', 'row-reverse', 'column', 'column-reverse'],
+    label: '놓는 방향',
+    help: '자식들을 가로로 놓을지 세로로 놓을지 정합니다. "한 줄로 나란히"를 골랐을 때만 적용됩니다.',
+    options: [
+      ['', '— 그대로 두기 —'],
+      ['row', '가로로 (왼쪽 → 오른쪽)'],
+      ['row-reverse', '가로로 거꾸로 (오른쪽 → 왼쪽)'],
+      ['column', '세로로 (위 → 아래)'],
+      ['column-reverse', '세로로 거꾸로 (아래 → 위)'],
+    ],
   },
-  { key: 'gap', label: 'gap', help: 'flex·grid 자식 사이의 간격입니다. 예: 16px, 1rem, 8px 16px.' },
-  { key: 'padding', label: 'padding', help: '요소 안쪽 여백입니다. 예: 16px, 1rem 2rem.' },
+  { key: 'gap', label: '자식 사이 간격', help: '자식들 사이에 생기는 빈 공간입니다. 16px처럼 적고, rem은 글자 크기의 배수입니다.' },
+  { key: 'padding', label: '안쪽 여백', help: '요소 테두리 안에서 내용까지의 여백입니다. 16px, 1rem 2rem처럼 적습니다.' },
   {
     key: 'alignItems',
     property: 'align-items',
-    label: 'align-items',
-    help: 'flex·grid에서 자식을 교차축으로 정렬합니다. center면 세로 가운데(column이면 가로 가운데)입니다.',
-    options: ['', 'stretch', 'flex-start', 'center', 'flex-end', 'baseline'],
+    label: '교차축 정렬',
+    help: '나란히 놓인 자식들을 교차 방향으로 어디에 붙일지 정합니다. "한 줄로 나란히"에서 세로 위치입니다.',
+    options: [
+      ['', '— 그대로 두기 —'],
+      ['stretch', '가득 늘리기 (stretch)'],
+      ['flex-start', '위쪽에 붙이기 (flex-start)'],
+      ['center', '가운데 (center)'],
+      ['flex-end', '아래쪽에 붙이기 (flex-end)'],
+      ['baseline', '글자 기준선에 맞추기 (baseline)'],
+    ],
   },
   {
     key: 'justifyContent',
     property: 'justify-content',
-    label: 'justify-content',
-    help: 'flex·grid에서 자식을 주축으로 정렬합니다. space-between은 양 끝에 붙이고 사이를 고르게 벌립니다.',
-    options: ['', 'flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly'],
+    label: '주축 정렬',
+    help: '나란히 놓인 자식들을 진행 방향으로 어디에 모을지 정합니다. "양 끝에 붙이고 사이 벌리기"가 자주 쓰입니다.',
+    options: [
+      ['', '— 그대로 두기 —'],
+      ['flex-start', '시작에 모으기 (flex-start)'],
+      ['center', '가운데 모으기 (center)'],
+      ['flex-end', '끝에 모으기 (flex-end)'],
+      ['space-between', '양 끝에 붙이고 사이 벌리기 (space-between)'],
+      ['space-around', '양옆에 반씩 여백 두기 (space-around)'],
+      ['space-evenly', '모든 간격을 똑같이 (space-evenly)'],
+    ],
   },
   {
     key: 'columns',
     property: 'grid-template-columns',
-    label: 'grid-template-columns',
-    help: 'grid의 열 구성입니다. 예: repeat(3, 1fr), 200px 1fr.',
+    label: '열 구성',
+    help: '격자로 배치할 때 열을 몇 개, 어떤 너비로 나눌지 정합니다. 예: repeat(3, 1fr)은 같은 너비 3열입니다.',
   },
 ];
 
@@ -908,49 +978,61 @@ const LAYOUT_PROPS = [
 const APPEARANCE_PROPS = [
   {
     property: 'color',
-    label: 'Text colour',
+    label: '글자 색',
     kind: 'color',
     token: '--hf-fg',
     help: '글자 색입니다. 상속된 색을 덮어씁니다.',
   },
   {
     property: 'background-color',
-    label: 'Background',
+    label: '배경 색',
     kind: 'color',
     token: '--hf-surface',
     help: '요소의 배경색입니다. 투명으로 두려면 지우면 됩니다.',
   },
   {
     property: 'font-size',
-    label: 'Font size',
+    label: '글자 크기',
     kind: 'text',
     placeholder: '1rem',
     help: '글자 크기입니다. rem은 브라우저 기본 크기의 배수라 화면 크기에 따라 함께 커집니다.',
   },
   {
     property: 'font-weight',
-    label: 'Font weight',
+    label: '글자 굵기',
     kind: 'select',
-    options: ['', '400', '500', '600', '700'],
+    options: [
+      ['', '— 그대로 두기 —'],
+      ['400', '보통 (400)'],
+      ['500', '조금 굵게 (500)'],
+      ['600', '굵게 (600)'],
+      ['700', '아주 굵게 (700)'],
+    ],
     help: '글자 두께입니다. 400은 보통, 700은 굵게입니다.',
   },
   {
     property: 'line-height',
-    label: 'Line height',
+    label: '줄 간격',
     kind: 'text',
     placeholder: '1.6',
     help: '줄 간격입니다. 단위 없는 값(1.6)은 글자 크기의 배수입니다.',
   },
   {
     property: 'text-align',
-    label: 'Text align',
+    label: '글자 정렬',
     kind: 'select',
-    options: ['', 'left', 'center', 'right', 'justify'],
+    options: [
+      ['', '— 그대로 두기 —'],
+      ['left', '왼쪽 정렬'],
+      ['center', '가운데 정렬'],
+      ['right', '오른쪽 정렬'],
+      ['justify', '양쪽 정렬'],
+    ],
     help: '글자 정렬입니다.',
   },
   {
     property: 'border-radius',
-    label: 'Corner radius',
+    label: '모서리 둥글기',
     kind: 'text',
     placeholder: '0.5rem',
     token: '--hf-radius',
@@ -958,28 +1040,28 @@ const APPEARANCE_PROPS = [
   },
   {
     property: 'border',
-    label: 'Border',
+    label: '테두리',
     kind: 'text',
     placeholder: '1px solid currentColor',
     help: '테두리입니다. 굵기·모양·색을 한 번에 적습니다.',
   },
   {
     property: 'width',
-    label: 'Width',
+    label: '너비',
     kind: 'text',
     placeholder: 'auto',
     help: '요소의 너비입니다. auto는 내용에 맞춥니다.',
   },
   {
     property: 'height',
-    label: 'Height',
+    label: '높이',
     kind: 'text',
     placeholder: 'auto',
     help: '요소의 높이입니다. auto는 내용에 맞춥니다.',
   },
   {
     property: 'opacity',
-    label: 'Opacity',
+    label: '불투명도',
     kind: 'text',
     placeholder: '1',
     help: '불투명도입니다. 0은 완전 투명, 1은 완전 불투명입니다.',
@@ -1066,7 +1148,13 @@ function renderAppearancePanel() {
     let input;
     if (prop.kind === 'color') input = colorInput(value, (next) => apply(prop.property, next));
     else if (prop.kind === 'select') {
-      input = selectInput(value, prop.options.map((option) => ({ value: option, label: option || '—' })), (next) => apply(prop.property, next));
+      input = selectInput(
+        value,
+        prop.options.map((option) =>
+          Array.isArray(option) ? { value: option[0], label: option[1] } : { value: option, label: option || '—' },
+        ),
+        (next) => apply(prop.property, next),
+      );
     } else input = valueInput(value, (next) => apply(prop.property, next), { placeholder: prop.placeholder ?? '' });
 
     const tokenButton = prop.token && !value
@@ -1081,7 +1169,9 @@ function renderAppearancePanel() {
           },
         })
       : null;
-    controls.append(field(prop.label, tokenButton ? el('div', { class: 'field__stack' }, input, tokenButton) : input, prop.help));
+    controls.append(
+      field(prop.label, tokenButton ? el('div', { class: 'field__stack' }, input, tokenButton) : input, prop.help, prop.property),
+    );
   }
 
   panel.replaceChildren(
@@ -1153,9 +1243,17 @@ function renderLayoutPanel() {
     const property = prop.property ?? prop.key;
     const value = current[property] ?? '';
     const input = prop.options
-      ? selectInput(value, prop.options.map((option) => ({ value: option, label: option || '—' })), (next) => apply(property, next))
+      ? selectInput(
+          value,
+          prop.options.map((option) =>
+            Array.isArray(option) ? { value: option[0], label: option[1] } : { value: option, label: option || '—' },
+          ),
+          (next) => apply(property, next),
+        )
       : numberInput(value, (next) => apply(property, next));
-    controls.append(field(prop.label, input, prop.help));
+    // The raw property name sits under the control: it teaches the CSS word
+    // without making the beginner read it first.
+    controls.append(field(prop.label, input, prop.help, property));
   }
 
   const ruleList = el('div', { class: 'group' });
@@ -1365,7 +1463,31 @@ function renderStructurePanel() {
 
   const wrapperInput = el('input', { type: 'text', placeholder: '<section class="wrap">' });
 
+  // The tree itself lives in `#tree-host` (outside this panel) because it is
+  // rebuilt on every scan and must keep its own state; this section only
+  // explains how to use it.
+  const treeHelp = el(
+    'p',
+    { class: 'muted' },
+    node
+      ? `트리에서 선택됨: ${nodeLabel(node)} (line ${node.line}). 미리보기에서 직접 클릭해도 됩니다.`
+      : '위 트리에서 요소를 고르면 여기서 넣고·옮기고·감싸고·복제·삭제할 수 있습니다.',
+  );
+
+  // Move (not re-create) the tree host into this panel: it holds the rendered
+  // rows and their focus/selection state, so rebuilding it would lose both.
+  const treeSection = groupHelp(
+    '페이지 구조',
+    '페이지의 모든 요소를 태그·id·class와 함께 보여줍니다. 미리보기에서 클릭할 수 없는 head·script 같은 요소도 여기서는 고를 수 있습니다.',
+    treeHelp,
+  );
+  treeSection.append(ui.treeHost);
+  // Hidden in the markup until it is inside the panel: as a bare sibling it
+  // would be visible next to every tab.
+  ui.treeHost.hidden = false;
+
   panel.replaceChildren(
+    treeSection,
     groupHelp(
       'Insert',
       '파운데이션·컴포넌트 스니펫을 선택한 위치에 삽입합니다. 프로젝트에 foundation/·components/ 레지스트리가 있어야 목록이 나옵니다.',
@@ -1476,7 +1598,6 @@ function renderStructurePanel() {
         }),
       ),
     ),
-    framesSection(),
   );
 }
 
@@ -1591,20 +1712,49 @@ function renderProjectPanel() {
 }
 
 /**
- * Page frames, as a section inside the Structure panel.
+ * Page layout tab: the page-level skeleton.
  *
- * These used to be their own tab, which read as a separate concept ("what is
- * a frame?") when it is really one structural operation: wrap the whole body
- * in a header/main/footer skeleton. Same panel, same pending/save path.
+ * Deliberately page-scoped, not selection-scoped: a header/sidebar/footer
+ * decision belongs to the document, not to the element under the cursor.
+ *
+ * Each preset is drawn as an empty wireframe. That is the whole point of the
+ * tab — comparing shapes — so the preview is switched to a skeleton view while
+ * this tab is open (`state.pageLayoutTab`) and the page's real content is not
+ * drawn at all.
  */
-function framesSection() {
+function renderPageLayoutPanel() {
   const page = state.page;
+  if (!page) {
+    ui.panels.pageLayout.replaceChildren(el('p', { class: 'empty', text: 'Scanning the page…' }));
+    return;
+  }
 
-  const cards = FRAME_PRESETS.map((preset) =>
-    el(
+  const cards = FRAME_PRESETS.map((preset) => {
+    const thumb = el('button', {
+      type: 'button',
+      class: 'wire',
+      // `aria-pressed` says which shape the preview is currently drawing;
+      // applying is a separate, explicit action.
+      'aria-pressed': String(state.previewFrame === preset.id),
+      'aria-label': `${preset.name} 골격 미리보기`,
+      // Picking a thumbnail previews it in the frame without applying it.
+      onclick: () => {
+        state.previewFrame = preset.id;
+        renderPageLayoutPanel();
+        postToBridge({ type: 'skeleton', frame: preset.id, areas: preset.areas });
+      },
+    });
+    thumb.append(wireframe(preset.areas));
+
+    return el(
       'div',
-      { class: 'rule' },
-      el('div', { class: 'rule__head' }, el('span', { text: preset.name })),
+      {
+        class: 'layout-card',
+        'data-preset': preset.id,
+        'data-active': String(state.previewFrame === preset.id),
+      },
+      thumb,
+      el('div', { class: 'layout-card__head' }, el('span', { class: 'layout-card__name', text: preset.name })),
       el('p', { class: 'muted', text: preset.description }),
       el(
         'div',
@@ -1612,12 +1762,13 @@ function framesSection() {
         el('button', {
           class: 'btn',
           type: 'button',
-          text: 'Apply frame',
+          text: '적용',
+          title: '이 골격으로 페이지를 감쌉니다. Save 전까지 파일은 그대로입니다.',
           onclick: () => applyFrame(preset),
         }),
       ),
-    ),
-  );
+    );
+  });
 
   // Say what will actually happen, including the case where the file has no
   // <body> yet and the frame has to create the document shell first.
@@ -1630,20 +1781,43 @@ function framesSection() {
   const hasHtml = all(page.tree).some((node) => node.tag === 'html');
   const target = !hasBody
     ? hasHtml
-      ? 'This page has <html> but no <body>: a body is created around the existing content.'
-      : 'This file has no document structure: <!doctype>, <html>, <head>, <body> are created around the existing content.'
-    : 'Frames wrap everything inside <body>. The current page content is moved into the frame slot.';
+      ? '이 페이지에는 <html>만 있고 <body>가 없습니다. 기존 내용을 감싸는 body를 새로 만듭니다.'
+      : '이 파일에는 문서 구조가 없습니다. <!doctype>·<html>·<head>·<body>를 만들어 기존 내용을 담습니다.'
+    : '골격은 <body> 안쪽을 감쌉니다. 지금 페이지 내용은 본문 자리로 옮겨집니다.';
   const cssNote = styleTarget(null)
     ? null
-    : el('p', { class: 'muted', text: 'No stylesheet linked: style.css is created next to the page to hold the frame CSS.' });
+    : el('p', { class: 'muted', text: '연결된 스타일시트가 없습니다. 골격 CSS를 담을 style.css를 페이지 옆에 만듭니다.' });
 
-  return groupHelp(
-    '페이지 골격',
-    '페이지 전체를 헤더·본문·푸터 같은 뼈대로 감쌉니다. 지금 페이지 내용은 그 안의 본문 자리로 들어갑니다. 처음 시작할 때 한 번 쓰는 기능입니다.',
-    ...cards,
-    el('p', { class: 'muted', text: target }),
-    cssNote,
+  ui.panels.pageLayout.replaceChildren(
+    groupHelp(
+      '페이지 골격',
+      '페이지 전체를 헤더·사이드바·본문·푸터 같은 뼈대로 나눕니다. 지금 페이지 내용은 뼈대 안의 본문 자리로 들어가고, 저장 전까지 파일은 바뀌지 않습니다.',
+      el('div', { class: 'wire-grid' }, ...cards),
+      el('p', { class: 'muted', text: target }),
+      cssNote,
+    ),
   );
+}
+
+/**
+ * Draws one skeleton as positioned boxes with their area name.
+ *
+ * SVG-free on purpose: the boxes are grid-placed divs, so they inherit the
+ * app's theme and stay readable at any panel width.
+ */
+function wireframe(areas) {
+  const wrap = el('div', { class: 'wire__box' });
+  for (const area of areas ?? []) {
+    const box = el('div', { class: 'wire__area', 'data-area': area.name });
+    // Percentages of the 100x100 spec, so the drawing scales with the panel.
+    box.style.insetInlineStart = `${area.x}%`;
+    box.style.insetBlockStart = `${area.y}%`;
+    box.style.inlineSize = `${area.w}%`;
+    box.style.blockSize = `${area.h}%`;
+    box.append(el('span', { class: 'wire__label', text: area.name }));
+    wrap.append(box);
+  }
+  return wrap;
 }
 
 function applyFrame(preset) {
@@ -2059,6 +2233,8 @@ function tabAvailability(node) {
     layout: Boolean(node && tag && !NON_RENDERED_TAGS.has(tag)),
     component: Boolean(isComponent),
     structure: true,
+    // Page-level, so it does not depend on what is selected.
+    pageLayout: true,
     project: true,
   };
 }
@@ -2101,11 +2277,15 @@ function showTab(requested) {
     tab.disabled = tab.hidden;
     ui.panels[key].hidden = !selected;
   }
+  // The page layout tab is the only view that hides the page's content; every
+  // other tab restores it. Driven by the tab, not by the selection.
+  syncSkeleton(name);
   if (name === 'appearance') renderAppearancePanel();
   if (name === 'node') renderNodePanel();
   if (name === 'layout') renderLayoutPanel();
   if (name === 'component') renderComponentPanel();
   if (name === 'structure') renderStructurePanel();
+  if (name === 'pageLayout') renderPageLayoutPanel();
   if (name === 'project') renderProjectPanel();
 }
 
@@ -2191,6 +2371,7 @@ window.addEventListener('message', (event) => {
     // A reloaded frame starts clean; replay the pending set so the preview
     // still reflects edits that have not been saved yet.
     postToBridge({ type: 'live', ...liveChanges() });
+    syncSkeleton(state.tab);
     if (state.selected) postToBridge({ type: 'select', id: state.selected });
     // A structural edit reloads the document; put the user back where they
     // were looking instead of jumping to the top on every drop.

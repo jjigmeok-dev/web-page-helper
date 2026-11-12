@@ -1,4 +1,4 @@
-import { KEY, emit, needsId, options, part, setState } from './core.js';
+import { KEY, emit, needsId, options, part, setState, nonSubmit } from './core.js';
 
 /**
  * Tooltip: descriptive text on hover/focus, dismissible with Escape.
@@ -24,7 +24,7 @@ export const meta = {
 };
 
 export function mount(root) {
-  const trigger = part(root, 'trigger');
+  const trigger = nonSubmit(part(root, 'trigger'));
   const content = part(root, 'content');
   if (!trigger || !content) throw new Error('[hf] tooltip needs [data-hf-part="trigger"] and [data-hf-part="content"]');
   const opts = options(root, meta.options);

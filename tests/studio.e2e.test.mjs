@@ -41,6 +41,91 @@ async function project() {
   return root;
 }
 
+/**
+ * The DOM tree lives inside the Structure tab now (there is no structure
+ * sidebar), so selecting from it means opening that tab first. Every tree
+ * interaction in these tests goes through here.
+ */
+async function openStructure(page) {
+  await page.click('#tab-structure');
+  await page.waitForSelector('#tree-host:not([hidden])');
+  await page.waitForSelector('.tree__row');
+}
+
+/** Select a node by a text fragment in the Structure tab, then return to a tab. */
+async function selectInTree(page, label, tab = null) {
+  await openStructure(page);
+  await page.locator('#tree .tree__row', { hasText: label }).first().click();
+  await page.waitForFunction(() => document.querySelector('#node-path').textContent.length > 0);
+  if (tab) await page.click(`#tab-${tab}`);
+}
+
+test('e2e: the page layout tab shows the skeleton, not the content', async (t) => {
+  const browser = await launch();
+  if (!browser) {
+    t.skip('no Chromium available');
+    return;
+  }
+  const root = await project();
+  const studio = await startStudio({ root, port: 0, quiet: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+    await page.goto(studio.url);
+    await page.frameLocator('#preview').locator('.page__lede').click();
+    await page.waitForFunction(() => document.querySelector('#node-path').textContent.length > 0);
+
+    // The tab is page-scoped, so it must be offered without picking anything.
+    assert.equal(await page.isVisible('#tab-page-layout'), true, 'layout tab needs no selection');
+
+    await page.click('#tab-page-layout');
+    await page.waitForSelector('.wire');
+    // The bridge is a separate frame, so skeleton mode arrives by postMessage.
+    await page.waitForFunction(
+      () => document.querySelector('#preview').contentWindow.document.documentElement.classList.contains('__hf-skeleton'),
+    );
+
+    // The page's own content is hidden and the frame is drawn instead.
+    const view = () =>
+      page.evaluate(() => {
+        const win = document.querySelector('#preview').contentWindow;
+        const doc = win.document;
+        const heading = doc.querySelector('h1');
+        return {
+          skeleton: doc.documentElement.classList.contains('__hf-skeleton'),
+          areas: [...doc.querySelectorAll('.__hf-skel')].map((box) => box.dataset.area),
+          headingVisibility: heading ? win.getComputedStyle(heading).visibility : null,
+          // The selection box must not float over content that is not drawn.
+          overlay: doc.querySelector('.__hf-overlay')?.hidden ?? true,
+        };
+      });
+
+    const hidden = await view();
+    assert.equal(hidden.skeleton, true, 'skeleton mode is on');
+    assert.deepEqual(hidden.areas, ['header', 'main', 'footer'], 'the default preset is drawn as areas');
+    assert.equal(hidden.headingVisibility, 'hidden', 'real page content is hidden');
+    assert.equal(hidden.overlay, true, 'no selection overlay over the wireframe');
+
+    // Choosing another preset redraws the wireframe without applying anything.
+    await page.locator('.layout-card[data-preset="holy-grail"] .wire').click();
+    await page.waitForFunction(
+      () => document.querySelector('#preview').contentWindow.document.querySelectorAll('.__hf-skel').length === 4,
+    );
+    assert.deepEqual((await view()).areas, ['header', 'sidebar', 'main', 'footer']);
+    assert.equal(await page.locator('#pending-list li').count(), 0, 'previewing a preset is not a change');
+
+    // Leaving the tab restores the page.
+    await page.click('#tab-structure');
+    await page.waitForFunction(() => !document.querySelector('#preview').contentWindow.document.documentElement.classList.contains('__hf-skeleton'));
+    const restored = await view();
+    assert.equal(restored.headingVisibility, 'visible', 'content is back');
+    assert.deepEqual(restored.areas, [], 'the wireframe is gone');
+  } finally {
+    await studio.close();
+    await browser.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('e2e: pick in the preview, edit layout, confirm the diff, verify disk', async (t) => {
   const browser = await launch();
   if (!browser) {
@@ -52,7 +137,7 @@ test('e2e: pick in the preview, edit layout, confirm the diff, verify disk', asy
   try {
     const page = await browser.newPage();
     await page.goto(studio.url);
-    await page.waitForSelector('.tree__row');
+    await openStructure(page);
 
     // Picking is on by default: clicking the page selects, no mode switch.
     assert.equal(await page.isChecked('#pick-toggle'), true, 'pick mode defaults on');
@@ -94,16 +179,16 @@ test('e2e: a stale file version is surfaced and nothing is written', async (t) =
   try {
     const page = await browser.newPage();
     await page.goto(studio.url);
-    await page.waitForSelector('.tree__row');
+    await openStructure(page);
 
     // Change the file behind the studio's back, then save an edit.
-    await page.click('#tab-structure');
-    // `hasText` also matches the "Header / Sidebar / Main / Footer" card, so
-    // pick by exact card title.
+    // Frames live in the page layout tab; `hasText` would also match
+    // "Header / Sidebar / Main / Footer", so pick by exact card name.
+    await page.click('#tab-page-layout');
     await page
-      .locator('#panel-structure .rule')
-      .filter({ has: page.locator('.rule__head', { hasText: /^Sidebar \/ Main$/ }) })
-      .locator('button')
+      .locator('#panel-page-layout .layout-card')
+      .filter({ has: page.locator('.layout-card__name', { hasText: /^사이드바 \/ 본문$/ }) })
+      .locator('button', { hasText: '적용' })
       .click();
     await page.waitForSelector('#pending-list li');
     const { writeFile } = await import('node:fs/promises');
@@ -131,9 +216,11 @@ test('e2e: dragging in the preview moves the element and only saves on confirm',
   const root = await project();
   const studio = await startStudio({ root, port: 0, quiet: true });
   try {
-    const page = await browser.newPage();
+    // Tall viewport: a drag needs source and drop target on screen at once,
+    // and the bridge hit-tests with elementFromPoint inside the frame.
+    const page = await browser.newPage({ viewport: { width: 1280, height: 1600 } });
     await page.goto(studio.url);
-    await page.waitForSelector('.tree__row');
+    await openStructure(page);
     const frame = page.frameLocator('#preview');
     await frame.locator('.page__lede').waitFor();
 
@@ -190,7 +277,7 @@ test('e2e: editing one element leaves other rules intact, including var() shorth
   try {
     const page = await browser.newPage();
     await page.goto(studio.url);
-    await page.waitForSelector('.tree__row');
+    await openStructure(page);
     const frame = page.frameLocator('#preview');
     await frame.locator('.page__lede').click();
 
@@ -226,9 +313,10 @@ test('e2e: a dropped element appears at its new place before saving', async (t) 
   const root = await project();
   const studio = await startStudio({ root, port: 0, quiet: true });
   try {
-    const page = await browser.newPage();
+    // Tall viewport: see the drag test above for why.
+    const page = await browser.newPage({ viewport: { width: 1280, height: 1600 } });
     await page.goto(studio.url);
-    await page.waitForSelector('.tree__row');
+    await openStructure(page);
     const frame = page.frameLocator('#preview');
     await frame.locator('.page__lede').waitFor();
     const before = await readFile(join(root, 'index.html'), 'utf8');
@@ -301,7 +389,7 @@ test('e2e: the Element panel edits and removes attributes', async (t) => {
   try {
     const page = await browser.newPage();
     await page.goto(studio.url);
-    await page.waitForSelector('.tree__row');
+    await openStructure(page);
     await page.locator('.tree__row', { hasText: 'h1' }).first().click();
     await page.click('#tab-node');
     await page.waitForSelector('.attr-row');
@@ -323,6 +411,7 @@ test('e2e: the Element panel edits and removes attributes', async (t) => {
     // remove it again: the row's ✕ must produce a removal, not a no-op
     await page.click('#reload-page');
     await page.waitForSelector('.attr-row');
+    await openStructure(page);
     await page.locator('.tree__row', { hasText: 'h1' }).first().click();
     await page.click('#tab-node');
     await page.waitForSelector('.attr-row');
@@ -352,10 +441,11 @@ test('e2e: side panels never overflow their column, even with long rule text', a
     const page = await browser.newPage();
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(studio.url);
-    await page.waitForSelector('.tree__row');
+    await openStructure(page);
 
     // The component panel renders a two-column field grid plus a `pre` usage
     // line; both used to size the panel to max-content and clip the fields.
+    await openStructure(page);
     await page.locator('.tree__row', { hasText: 'page__lede' }).first().click();
     await page.click('#tab-node');
     await page.waitForSelector('#panel-node .group');
@@ -379,6 +469,7 @@ test('e2e: side panels never overflow their column, even with long rule text', a
     assert.ok(spill.scrollWidth <= spill.clientWidth + 1, 'a long rule token must not widen the panel');
     assert.ok(spill.probeRight <= spill.panelRight + 1, 'rule text must not paint outside the column');
 
+    await openStructure(page);
     await page.locator('.tree__row', { hasText: 'hf-example-card' }).first().click();
     await page.click('#tab-component');
     await page.waitForSelector('#panel-component .group');
@@ -421,7 +512,7 @@ test('e2e: edits show in the preview before saving, and discard reverts them', a
   try {
     const page = await browser.newPage();
     await page.goto(studio.url);
-    await page.waitForSelector('.tree__row');
+    await openStructure(page);
 
     const frame = page.frameLocator('#preview');
     await frame.locator('.page__lede').click();
@@ -471,7 +562,7 @@ test('e2e: a field returned to its disk value drops the pending change', async (
   try {
     const page = await browser.newPage();
     await page.goto(studio.url);
-    await page.waitForSelector('.tree__row');
+    await openStructure(page);
 
     const frame = page.frameLocator('#preview');
     await frame.locator('.page__lede').click();
@@ -513,7 +604,7 @@ test('e2e: the inspector offers only the tabs that apply to the selection', asyn
   try {
     const page = await browser.newPage();
     await page.goto(studio.url);
-    await page.waitForSelector('.tree__row');
+    await openStructure(page);
 
     // `display` matters, not just the attribute: a tab rule with `display:
     // inline-flex` once kept `hidden` tabs fully visible, so reading the
@@ -525,6 +616,7 @@ test('e2e: the inspector offers only the tabs that apply to the selection', asyn
           .map((tab) => tab.id.replace(/^tab-/, '')),
       );
     const selectInTree = async (label) => {
+      await openStructure(page);
       const row = page.locator('#tree .tree__row', { hasText: label }).first();
       await row.click();
       await page.waitForFunction(() => document.querySelector('#node-path').textContent.length > 0);
@@ -575,8 +667,9 @@ test('e2e: every panel title carries a Korean help tooltip', async (t) => {
   try {
     const page = await browser.newPage();
     await page.goto(studio.url);
-    await page.waitForSelector('.tree__row');
+    await openStructure(page);
     // A rendered element, so every tab applies and the headings get rendered.
+    await openStructure(page);
     await page.locator('#tree .tree__row', { hasText: '.page__lede' }).first().click();
     await page.waitForSelector('#tab-layout:not([hidden])');
     await page.click('#tab-layout');
@@ -610,7 +703,7 @@ test('e2e: the inspector survives narrow windows instead of disappearing', async
   try {
     const page = await browser.newPage();
     await page.goto(studio.url);
-    await page.waitForSelector('.tree__row');
+    await openStructure(page);
 
     // A `display: none` on the pane below 68rem used to remove the whole
     // inspector - tabs, menus and help icons - with no way to get it back.
@@ -662,7 +755,7 @@ test('e2e: every section title and field has a Korean help icon', async (t) => {
   try {
     const page = await browser.newPage();
     await page.goto(studio.url);
-    await page.waitForSelector('.tree__row');
+    await openStructure(page);
 
     const korean = /[\uac00-\ud7a3]/;
     const auditPanel = () =>
@@ -696,6 +789,7 @@ test('e2e: every section title and field has a Korean help icon', async (t) => {
     };
 
     const select = async (label) => {
+      await openStructure(page);
       await page.locator('#tree .tree__row', { hasText: label }).first().click();
       await page.waitForSelector('#node-path:not(:empty)');
       await page.waitForTimeout(150);

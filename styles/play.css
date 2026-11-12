@@ -1,0 +1,59 @@
+/*
+ * Playground: the two things this toolkit currently splits unevenly.
+ *
+ * Layout below is plain CSS the browser computes. The button below is a
+ * headless `toggle` foundation: it paints its own state, but a <button> has
+ * no form value, so the strip at the bottom of the page stays empty.
+ *
+ * Every rule here is a normal stylesheet rule, so the studio's Layout and
+ * Style panels write into it through the same pending -> diff -> save path.
+ * Keep selectors single-class: one rule, one place to edit.
+ */
+
+.play-stack {
+  display: flex;
+  gap: 1rem;
+  padding: 1.5rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  background: var(--hf-surface-2, #f4f4f5);
+  border-radius: var(--hf-radius, 0.75rem);
+}
+
+.play-box {
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--hf-border, #dddddd);
+  border-radius: 0.5rem;
+  background: var(--hf-surface, #ffffff);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.play-button {
+  font: inherit;
+  padding: 0.55rem 1rem;
+  border: 1px solid var(--hf-border, #dddddd);
+  border-radius: 0.5rem;
+  background: var(--hf-surface, #ffffff);
+  color: inherit;
+  cursor: pointer;
+}
+
+.play-button[aria-pressed='true'] {
+  background: var(--hf-accent, #4f46e5);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+.play-readout {
+  padding: 0.9rem 1.1rem;
+  border: 1px dashed var(--hf-border, #dddddd);
+  border-radius: 0.5rem;
+  color: var(--hf-muted, #52525b);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.page {
+  color: currentColor;
+}

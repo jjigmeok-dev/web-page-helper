@@ -1,4 +1,4 @@
-import { KEY, emit, isDisabled, options, parts, setState } from './core.js';
+import { KEY, emit, isDisabled, options, parts, setState, typeahead } from './core.js';
 
 /**
  * Listbox: single or multi selection with a roving cursor.
@@ -26,8 +26,11 @@ export function mount(root, helpers = {}) {
   const selected = new Set(
     (Array.isArray(opts.selected) ? opts.selected : [opts.selected]).filter((value) => value !== undefined && value !== null).map(String),
   );
-  const search = helpers.typeahead
-    ? helpers.typeahead((text) => options_().findIndex((option) => label(option).startsWith(text)))
+  // `options.typeahead` defaults to true, so a mount with no helpers must not
+  // silently disable it: fall back to the core implementation.
+  const makeTypeahead = helpers.typeahead ?? typeahead;
+  const search = opts.typeahead
+    ? makeTypeahead((text) => options_().findIndex((option) => label(option).startsWith(text)))
     : null;
   let active = -1;
 

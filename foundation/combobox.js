@@ -12,6 +12,11 @@ import { KEY, emit, needsId, options, part, setState } from './core.js';
  *
  * Filtering hides options with `hidden`; it never rewrites your markup.
  * Emits `hf:change` with the chosen value and `hf:input` on each keystroke.
+ *
+ * The popup is a `[data-hf-part="listbox"]`, not a mounted `<hf-listbox>`:
+ * a nested `[data-hf]` belongs to itself, not to this component. A host that
+ * wires the two together can pass the listbox controller as `helpers.listbox`;
+ * filtering then calls its `refresh()`. The plain markup below needs neither.
  */
 export const meta = {
   name: 'combobox',
@@ -25,7 +30,7 @@ export const meta = {
   events: ['hf:change', 'hf:input', 'hf:open', 'hf:close'],
 };
 
-export function mount(root, { listbox }) {
+export function mount(root, { listbox } = {}) {
   const input = part(root, 'input');
   const list = part(root, 'listbox');
   if (!input || !list) throw new Error('[hf] combobox needs [data-hf-part="input"] and [data-hf-part="listbox"]');
@@ -60,7 +65,9 @@ export function mount(root, { listbox }) {
       const match = !query || (opts.filter === 'startsWith' ? text.startsWith(query) : text.includes(query));
       option.hidden = !match;
     });
-    if (listbox) listbox.refresh();
+    // Optional collaborator: present only when the markup also mounted a
+    // listbox component. Filtering is driven by `hidden` either way.
+    if (typeof listbox?.refresh === 'function') listbox.refresh();
   }
 
   function render(next, reason) {

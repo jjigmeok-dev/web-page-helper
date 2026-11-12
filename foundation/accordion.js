@@ -1,4 +1,4 @@
-import { KEY, emit, isDisabled, needsId, options, part, parts, setState } from './core.js';
+import { KEY, emit, isDisabled, needsId, options, part, parts, setState, nonSubmit } from './core.js';
 
 /**
  * Accordion: a group of disclosures with single or multiple expansion.
@@ -63,7 +63,7 @@ export function mount(root) {
   const groupName = opts.type === 'single' && native ? `hf-accordion-${(groupCounter += 1)}` : null;
 
   const entries = items.map((item) => {
-    const trigger = part(item, 'trigger');
+    const trigger = nonSubmit(part(item, 'trigger'));
     if (!trigger) throw new Error('[hf] accordion item needs a trigger');
     const panel = part(item, 'panel');
     if (native) {

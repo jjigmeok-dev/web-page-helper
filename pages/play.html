@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Playground</title>
+    <link rel="stylesheet" href="/styles/base.css" />
+    <link rel="stylesheet" href="/styles/demo.css" />
+    <link rel="stylesheet" href="/styles/play.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header>
+        <h1 class="page__title">Playground</h1>
+        <p class="page__lede">
+          스튜디오에서 요소를 클릭하고 오른쪽 패널로 고쳐보세요. 저장 전까지
+          파일은 바뀌지 않습니다.
+        </p>
+      </header>
+
+      <!-- 1. 레이아웃: 브라우저가 CSS로 계산한다 -->
+      <section>
+        <h2 class="panel__title">1 · 레이아웃</h2>
+        <div class="play-stack">
+          <div class="play-box">첫 번째</div>
+          <div class="play-box">두 번째</div>
+          <div class="play-box">세 번째</div>
+        </div>
+      </section>
+
+      <!-- 2. 버튼: 파운데이션이 상태를 그린다 -->
+      <section>
+        <h2 class="panel__title">2 · 버튼</h2>
+        <form id="play-form">
+          <button class="play-button" data-hf="toggle" data-hf-part="control">
+            알림 켜기
+          </button>
+        </form>
+      </section>
+
+      <!-- 3. 진단: 이 버튼이 <form>으로 실제 제출하는 값 -->
+      <section>
+        <h2 class="panel__title">3 · 이 버튼이 서버로 보내는 값</h2>
+        <p class="play-readout" id="play-readout">읽는 중…</p>
+      </section>
+    </main>
+
+    <script type="module">
+      import { start } from '/runtime/index.js';
+      start();
+
+      const form = document.getElementById('play-form');
+      const out = document.getElementById('play-readout');
+
+      function readValue() {
+        const entries = [...new FormData(form).entries()];
+        out.textContent = entries.length
+          ? entries.map(([name, value]) => `${name} = ${value}`).join('\n')
+          : '(없음) — 버튼은 폼 값이 아닙니다';
+      }
+
+      // 상태가 바뀌면 다시 읽는다. `hf:change`는 파운데이션이 보내는 표준 이벤트.
+      form.addEventListener('hf:change', readValue);
+      form.addEventListener('click', () => requestAnimationFrame(readValue));
+      readValue();
+    </script>
+  </body>
+</html>

@@ -1014,3 +1014,118 @@ test('validate: no foundation violates the headless contract', async () => {
     });
   }
 });
+
+test('every foundation mounts with no helpers argument', async () => {
+  await withPage(async ({ page }) => {
+    await run(page, () => {
+      const { foundations, assert } = window.hf;
+      // Fixtures that satisfy each foundation's `required` parts. A combobox
+      // only needs a plain `data-hf-part="listbox"`: a nested `[data-hf]`
+      // would belong to itself, not to the combobox (`owns()`).
+      const markup = {
+        disclosure: '<div data-hf="disclosure"><button data-hf-part="trigger">T</button><div data-hf-part="panel">P</div></div>',
+        tabs: '<div data-hf="tabs"><div data-hf-part="list"><button data-hf-part="tab">A</button><button data-hf-part="tab">B</button></div><div data-hf-part="panel">a</div><div data-hf-part="panel">b</div></div>',
+        accordion: '<div data-hf="accordion"><div data-hf-part="item"><button data-hf-part="trigger">T</button><div data-hf-part="panel">P</div></div></div>',
+        dialog: '<dialog data-hf="dialog"><div data-hf-part="content">C</div></dialog>',
+        popover: '<div data-hf="popover"><button data-hf-part="trigger">T</button><div data-hf-part="content">C</div></div>',
+        menu: '<div data-hf="menu"><button data-hf-part="trigger">T</button><div data-hf-part="list"><button data-hf-part="item">A</button></div></div>',
+        tooltip: '<div data-hf="tooltip"><button data-hf-part="trigger">T</button><span data-hf-part="content">C</span></div>',
+        toggle: '<button data-hf="toggle" data-hf-part="control">T</button>',
+        switch: '<button data-hf="switch" data-hf-part="control">S</button>',
+        'radio-group': '<div data-hf="radio-group"><button data-hf-part="radio" data-value="a">A</button><button data-hf-part="radio" data-value="b">B</button></div>',
+        listbox: '<div data-hf="listbox"><div data-hf-part="option" data-value="a">A</div></div>',
+        combobox: '<div data-hf="combobox"><input data-hf-part="input"><ul data-hf-part="listbox"><li data-hf-part="option" data-value="a">A</li></ul></div>',
+        toast: '<div data-hf="toast"><div data-hf-part="region"></div></div>',
+      };
+      for (const [name, foundation] of Object.entries(foundations)) {
+        const html = markup[name];
+        assert.ok(html, `missing fixture for ${name}`);
+        const host = document.createElement('div');
+        host.innerHTML = html.trim();
+        document.body.append(host);
+        // The contract: helpers are optional, so a caller that passes nothing
+        // must not crash. This is how docs show `mount(root)` being called.
+        const controller = foundation.mount(host.firstElementChild);
+        assert.ok(controller?.destroy, `${name}: mount returned no controller`);
+        controller.destroy();
+        host.remove();
+      }
+
+      // `typeahead` defaults to true in both `options`, so a helper-less mount
+      // must still move the cursor on a key press. Regression: it used to be
+      // wired only through the injected helper, so it was silently dead.
+      for (const [name, html] of [
+        ['listbox', '<div data-hf="listbox"><div data-hf-part="option" data-value="a">Alpha</div><div data-hf-part="option" data-value="b">Beta</div></div>'],
+        ['menu', '<div data-hf="menu"><button data-hf-part="trigger">T</button><div data-hf-part="list"><button data-hf-part="item">Alpha</button><button data-hf-part="item">Beta</button></div></div>'],
+      ]) {
+        const host = document.createElement('div');
+        host.innerHTML = html;
+        document.body.append(host);
+        const el = host.firstElementChild;
+        const controller = foundations[name].mount(el);
+        if (name === 'menu') el.querySelector('[data-hf-part="trigger"]').dispatchEvent(new Event('click', { bubbles: true }));
+        const target = el.querySelector('[data-hf-part="option"], [data-hf-part="item"]');
+        target.focus();
+        target.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', bubbles: true, cancelable: true }));
+        // listbox marks the cursor with `data-active`; menu moves focus.
+        const active = el.querySelector('[data-active]') ?? document.activeElement;
+        assert.equal(active?.textContent?.trim(), 'Beta', `${name}: typeahead did not jump to "Beta"`);
+        controller.destroy();
+        host.remove();
+      }
+    });
+  });
+});
+
+test('a button part inside a form never submits it', async () => {
+  await withPage(async ({ page }) => {
+    await run(page, () => {
+      const { foundations, assert, click } = window.hf;
+      // `<button>` without `type` defaults to submit. Every foundation part is
+      // a control, so clicking one must not navigate away from the form.
+      const cases = {
+        toggle: '<div data-hf="toggle"><button data-hf-part="control">T</button></div>',
+        switch: '<div data-hf="switch"><button data-hf-part="control">S</button></div>',
+        disclosure: '<div data-hf="disclosure"><button data-hf-part="trigger">T</button><div data-hf-part="panel">P</div></div>',
+        menu: '<div data-hf="menu"><button data-hf-part="trigger">T</button><div data-hf-part="list"><button data-hf-part="item">A</button></div></div>',
+        radioGroup: '<div data-hf="radio-group"><button data-hf-part="radio" data-value="a">A</button><button data-hf-part="radio" data-value="b">B</button></div>',
+        tabs: '<div data-hf="tabs"><div data-hf-part="list"><button data-hf-part="tab">A</button></div><div data-hf-part="panel">a</div></div>',
+        accordion: '<div data-hf="accordion"><div data-hf-part="item"><button data-hf-part="trigger">T</button><div data-hf-part="panel">P</div></div></div>',
+        popover: '<div data-hf="popover"><button data-hf-part="trigger">T</button><div data-hf-part="content">C</div></div>',
+        tooltip: '<div data-hf="tooltip"><button data-hf-part="trigger">T</button><span data-hf-part="content">C</span></div>',
+        dialog: '<dialog data-hf="dialog"><div data-hf-part="content"><button data-hf-part="close">X</button></div></dialog>',
+      };
+      for (const [name, html] of Object.entries(cases)) {
+        let submitted = false;
+        const form = document.createElement('form');
+        form.addEventListener('submit', (event) => { event.preventDefault(); submitted = true; });
+        const host = document.createElement('div');
+        host.innerHTML = html;
+        const el = host.firstElementChild;
+        form.append(el);
+        document.body.append(form);
+        const foundation = foundations[name === 'radioGroup' ? 'radio-group' : name];
+        const controller = foundation.mount(el);
+        const buttons = [...el.querySelectorAll('button')];
+        assert.ok(buttons.length, `${name}: fixture has no button`);
+        for (const button of buttons) {
+          assert.notEqual(button.type, 'submit', `${name}: a part button still submits`);
+        }
+        click(buttons[0]);
+        assert.notOk(submitted, `${name}: clicking its button submitted the form`);
+        controller.destroy();
+        form.remove();
+      }
+      // An explicit submitter is the caller's call and must survive.
+      const form = document.createElement('form');
+      const host = document.createElement('div');
+      host.innerHTML = '<div data-hf="toggle"><button data-hf-part="control" type="submit">Save</button></div>';
+      const explicit = host.firstElementChild;
+      form.append(explicit);
+      document.body.append(form);
+      foundations.toggle.mount(explicit);
+      assert.equal(explicit.querySelector('button').type, 'submit', 'explicit type="submit" was overridden');
+      form.remove();
+    });
+  });
+});

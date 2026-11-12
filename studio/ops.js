@@ -141,12 +141,17 @@ export function textOp({ file, version, nodeId, value, previous }) {
 /**
  * Frame presets: a page skeleton the user can insert as a whole.
  * `slot` is where the current page content is moved into.
+ *
+ * `areas` describes the same skeleton as a grid for the Page layout tab, which
+ * draws each preset as an empty wireframe: the point of that tab is to compare
+ * shapes, so it must not render the page's real content.
+ *   { name, x, y, w, h }  in a 100 x 100 grid cell space.
  */
 export const FRAME_PRESETS = [
   {
     id: 'header-main-footer',
-    name: 'Header / Main / Footer',
-    description: 'Classic document frame. Existing content moves into main.',
+    name: '헤더 / 본문 / 푸터',
+    description: '기본 문서 골격입니다. 지금 내용이 본문 자리로 들어갑니다.',
     html: `<div class="layout">
   <header class="layout__header">Header</header>
   <main class="layout__main" data-hf-frame-slot></main>
@@ -174,11 +179,16 @@ export const FRAME_PRESETS = [
 }
 `,
     slot: '.layout__main',
+    areas: [
+      { name: 'header', x: 0, y: 0, w: 100, h: 18 },
+      { name: 'main', x: 0, y: 18, w: 100, h: 64 },
+      { name: 'footer', x: 0, y: 82, w: 100, h: 18 },
+    ],
   },
   {
     id: 'sidebar-main',
-    name: 'Sidebar / Main',
-    description: 'Two-column application frame with a fixed sidebar.',
+    name: '사이드바 / 본문',
+    description: '고정 사이드바가 있는 2열 골격입니다. 좁은 화면에서는 세로로 쌓입니다.',
     html: `<div class="layout">
   <aside class="layout__sidebar">Navigation</aside>
   <main class="layout__main" data-hf-frame-slot></main>
@@ -206,11 +216,15 @@ export const FRAME_PRESETS = [
 }
 `,
     slot: '.layout__main',
+    areas: [
+      { name: 'sidebar', x: 0, y: 0, w: 32, h: 100 },
+      { name: 'main', x: 32, y: 0, w: 68, h: 100 },
+    ],
   },
   {
     id: 'holy-grail',
-    name: 'Header / Sidebar / Main / Footer',
-    description: 'Full application shell with named areas.',
+    name: '헤더 / 사이드바 / 본문 / 푸터',
+    description: '네 영역을 모두 갖춘 전체 앱 골격입니다.',
     html: `<div class="layout">
   <header class="layout__header">Header</header>
   <aside class="layout__sidebar">Navigation</aside>
@@ -266,6 +280,12 @@ export const FRAME_PRESETS = [
 }
 `,
     slot: '.layout__main',
+    areas: [
+      { name: 'header', x: 0, y: 0, w: 100, h: 16 },
+      { name: 'sidebar', x: 0, y: 16, w: 32, h: 68 },
+      { name: 'main', x: 32, y: 16, w: 68, h: 68 },
+      { name: 'footer', x: 0, y: 84, w: 100, h: 16 },
+    ],
   },
 ];
 

@@ -24,6 +24,10 @@
             <span>Page</span>
             <select id="page-select" aria-label="Page to edit"></select>
           </label>
+          <label class="pick pick--topbar">
+            <input type="checkbox" id="pick-toggle" checked />
+            <span>미리보기에서 바로 선택</span>
+          </label>
           <button type="button" class="btn" id="open-project" title="Load another project folder from disk">Open…</button>
           <button type="button" class="btn" id="reload-page" title="Reload the preview from disk">Reload</button>
           <button type="button" class="btn btn--ghost" id="undo-btn" title="Undo the last save">Undo</button>
@@ -32,18 +36,6 @@
       </header>
 
       <main class="layout">
-        <aside class="pane pane--tree" aria-label="Page structure">
-          <div class="pane__head">
-            <h2>Structure</h2>
-            <label class="pick">
-              <input type="checkbox" id="pick-toggle" checked />
-              <span>Pick in preview</span>
-            </label>
-          </div>
-          <div class="tree" id="tree" role="tree" aria-label="DOM tree" tabindex="0"></div>
-          <div class="pane__foot" id="tree-status"></div>
-        </aside>
-
         <section class="pane pane--preview" aria-label="Preview">
           <div class="preview__bar">
             <span id="preview-url" class="preview__url">…</span>
@@ -56,10 +48,11 @@
 
         <aside class="pane pane--panel" aria-label="Settings">
           <div class="tabs" role="tablist" aria-label="Settings sections">
-            <button role="tab" id="tab-appearance" aria-controls="panel-appearance" aria-selected="true">스타일<span class="help" role="img" aria-label="색·글자 크기·모서리 둥글기를 바꿉니다. 초보자가 가장 먼저 쓰는 설정입니다." title="색·글자 크기·모서리 둥글기를 바꿉니다. 초보자가 가장 먼저 쓰는 설정입니다." tabindex="0">?</span></button>
+            <button role="tab" id="tab-appearance" aria-controls="panel-appearance" aria-selected="true">스타일<span class="help" role="img" aria-label="글자 색·크기·배경·모서리 둥글기를 바꿉니다. 초보자가 가장 먼저 쓰는 설정입니다." title="글자 색·크기·배경·모서리 둥글기를 바꿉니다. 초보자가 가장 먼저 쓰는 설정입니다." tabindex="0">?</span></button>
             <button role="tab" id="tab-layout" aria-controls="panel-layout" aria-selected="false">배치<span class="help" role="img" aria-label="요소를 가로·세로로 놓고, 간격과 여백을 정합니다. 위치 조정은 여기서 합니다." title="요소를 가로·세로로 놓고, 간격과 여백을 정합니다. 위치 조정은 여기서 합니다." tabindex="0">?</span></button>
             <button role="tab" id="tab-node" aria-controls="panel-node" aria-selected="false">내용<span class="help" role="img" aria-label="글자 내용과 HTML 속성(id·class·role 등)을 직접 편집합니다." title="글자 내용과 HTML 속성(id·class·role 등)을 직접 편집합니다." tabindex="0">?</span></button>
-            <button role="tab" id="tab-structure" aria-controls="panel-structure" aria-selected="false">구조<span class="help" role="img" aria-label="요소를 넣고·옮기고·복제·삭제하고, 페이지 전체 골격(헤더/사이드바/푸터)을 만듭니다." title="요소를 넣고·옮기고·복제·삭제하고, 페이지 전체 골격(헤더/사이드바/푸터)을 만듭니다." tabindex="0">?</span></button>
+            <button role="tab" id="tab-page-layout" aria-controls="panel-page-layout" aria-selected="false">레이아웃<span class="help" role="img" aria-label="페이지 전체 골격(헤더·사이드바·본문·푸터)을 고릅니다. 이 탭에서는 미리보기의 실제 내용이 숨고 골격만 보입니다." title="페이지 전체 골격(헤더·사이드바·본문·푸터)을 고릅니다. 이 탭에서는 미리보기의 실제 내용이 숨고 골격만 보입니다." tabindex="0">?</span></button>
+            <button role="tab" id="tab-structure" aria-controls="panel-structure" aria-selected="false">구조<span class="help" role="img" aria-label="페이지 전체 트리를 보며 요소를 넣고·옮기고·복제·삭제합니다." title="페이지 전체 트리를 보며 요소를 넣고·옮기고·복제·삭제합니다." tabindex="0">?</span></button>
             <button role="tab" id="tab-component" aria-controls="panel-component" aria-selected="false">컴포넌트<span class="help" role="img" aria-label="헤드리스 파운데이션의 옵션이나 유저 컴포넌트의 props를 폼으로 설정합니다." title="헤드리스 파운데이션의 옵션이나 유저 컴포넌트의 props를 폼으로 설정합니다." tabindex="0">?</span></button>
             <button role="tab" id="tab-project" aria-controls="panel-project" aria-selected="false">프로젝트<span class="help" role="img" aria-label="프로젝트 구성·페이지 목록·디자인 토큰·편집이 막힌 이유를 보여줍니다." title="프로젝트 구성·페이지 목록·디자인 토큰·편집이 막힌 이유를 보여줍니다." tabindex="0">?</span></button>
           </div>
@@ -71,7 +64,15 @@
           <div class="panel" id="panel-node" role="tabpanel" aria-labelledby="tab-node" hidden>
             <p class="empty">Select an element in the preview or the tree.</p>
           </div>
+          <div class="panel" id="panel-page-layout" role="tabpanel" aria-labelledby="tab-page-layout" hidden></div>
           <div class="panel" id="panel-structure" role="tabpanel" aria-labelledby="tab-structure" hidden></div>
+
+          <!-- Lives outside every `.panel`: `renderStructurePanel` replaces the
+               panel's children, which would delete the tree and its state. -->
+          <div class="tree-host" id="tree-host" hidden>
+            <div class="tree" id="tree" role="tree" aria-label="DOM tree" tabindex="0"></div>
+            <div class="pane__foot" id="tree-status"></div>
+          </div>
           <div class="panel" id="panel-component" role="tabpanel" aria-labelledby="tab-component" hidden></div>
           <div class="panel" id="panel-project" role="tabpanel" aria-labelledby="tab-project" hidden></div>
 

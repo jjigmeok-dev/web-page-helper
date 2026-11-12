@@ -1,4 +1,4 @@
-import { KEY, emit, isDisabled, options, part, parts, setState } from './core.js';
+import { KEY, emit, isDisabled, options, part, parts, setState, nonSubmit } from './core.js';
 
 /**
  * Toggle: a single control with pressed state (`aria-pressed`).
@@ -20,7 +20,7 @@ export const meta = {
 };
 
 export function mount(root) {
-  const control = part(root, 'control') || root;
+  const control = nonSubmit(part(root, 'control') || root);
   const opts = options(root, meta.options);
   let pressed = Boolean(opts.pressed);
 
@@ -84,7 +84,7 @@ export const switchMeta = {
 };
 
 export function mountSwitch(root) {
-  const control = part(root, 'control') || root;
+  const control = nonSubmit(part(root, 'control') || root);
   const thumb = part(root, 'thumb');
   const opts = options(root, switchMeta.options);
   let checked = Boolean(opts.checked);

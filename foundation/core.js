@@ -54,6 +54,21 @@ export function parts(root, name) {
   return Array.from(root.querySelectorAll(`[data-hf-part="${name}"]`)).filter((el) => owns(root, el));
 }
 
+/**
+ * Marks a `<button>` part as a control, not a form submitter.
+ *
+ * A `<button>` with no `type` inside a `<form>` defaults to `type="submit"`.
+ * Every foundation part is a control — a toggle, a tab, a menu item — so the
+ * default made each click submit the form and navigate away. Callers that
+ * really want a submitter (e.g. a dialog's `confirm`) set `type="submit"`
+ * explicitly and are left alone here.
+ */
+export function nonSubmit(el) {
+  if (el.tagName !== 'BUTTON') return el;
+  if (!el.hasAttribute('type')) el.setAttribute('type', 'button');
+  return el;
+}
+
 /** Reads `data-hf-options='{"key": value}'` and merges it over defaults. */
 export function options(root, defaults = {}) {
   const raw = root.getAttribute('data-hf-options');

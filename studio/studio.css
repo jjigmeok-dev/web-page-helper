@@ -164,6 +164,21 @@ body {
   gap: 0.1rem;
 }
 
+/* The CSS property the field writes, on its own line under the control.
+   Secondary by design: it teaches the real name without being the first thing
+   a beginner has to decode. */
+.field__prop {
+  justify-self: start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0;
+  opacity: 0.75;
+}
+
 .field input[type='text'],
 .field input[type='number'],
 .field select,
@@ -212,7 +227,9 @@ body {
 /* layout */
 .layout {
   display: grid;
-  grid-template-columns: minmax(15rem, 20rem) minmax(0, 1fr) minmax(18rem, 23rem);
+  /* The structure tree moved into the inspector, so the editor is two panes:
+     preview first, settings second. */
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem);
   min-height: 0;
 }
 
@@ -233,6 +250,22 @@ body {
 .pane--panel {
   grid-template-rows: auto minmax(0, 1fr) auto;
   border-inline-end: 0;
+}
+
+/* The DOM tree is not a pane of its own any more. `renderStructurePanel`
+   moves this host into the Structure panel, so it scrolls with the panel and
+   its rows keep their state (it is moved, never rebuilt). */
+.tree-host {
+  display: grid;
+  grid-template-rows: minmax(12rem, 1fr) auto;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.tree-host[hidden] {
+  display: none;
 }
 
 .pane__head {
@@ -269,7 +302,100 @@ body {
   cursor: pointer;
 }
 
+/* The pick toggle moved from the removed structure sidebar into the topbar,
+   where it sits next to the page selector it applies to. */
+.pick--topbar {
+  padding: 0.28rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--bg);
+  white-space: nowrap;
+}
+
 /* tree */
+/* ---- page layout tab ---- */
+
+/* Presets are compared by shape, so they get a card each with an empty
+   wireframe on top: no page content is drawn here. */
+.wire-grid {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.layout-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+/* The preset the preview is currently drawing. */
+.layout-card[data-active='true'] {
+  border-color: var(--accent, #4f46e5);
+  background: color-mix(in oklab, var(--accent, #4f46e5) 6%, transparent);
+}
+
+.wire[aria-pressed='true'] .wire__box {
+  border-color: var(--accent, #4f46e5);
+}
+
+.wire {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  border-radius: 0.35rem;
+}
+
+.wire:focus-visible {
+  outline: 2px solid var(--accent, #4f46e5);
+  outline-offset: 2px;
+}
+
+/* The drawing surface. `aspect-ratio` keeps every preset the same size so
+   the shapes are what differs, not the thumbnail. */
+.wire__box {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--bg-2);
+  overflow: hidden;
+}
+
+.wire__area {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--muted);
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--muted) 12%, transparent);
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+}
+
+.wire__label {
+  padding: 0 0.2rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.layout-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.layout-card__name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
 .tree {
   overflow: auto;
   padding: 0.35rem 0.35rem 1rem;
@@ -366,11 +492,13 @@ body {
 /* tabs + panels */
 .tabs {
   display: flex;
-  /* Six tabs do not fit the inspector column at 1024px; wrapping keeps the
+  /* Seven tabs do not fit the inspector column at 1024px; wrapping keeps the
      last one readable, where a clipped scroll strip hides it entirely. */
   flex-wrap: wrap;
-  gap: 0.15rem;
-  padding: 0.35rem 0.35rem 0;
+  /* No inter-tab gap: seven labels otherwise overflow the 24rem inspector by
+     a couple of pixels and wrap onto a second row. */
+  gap: 0;
+  padding: 0.35rem 0.25rem 0;
   border-block-end: 1px solid var(--border);
 }
 
@@ -380,9 +508,9 @@ body {
   gap: 0.15rem;
   font: inherit;
   font-size: 12px;
-  /* A tab is a label plus a help icon; drop the inline padding so all six fit
-     one row in the inspector column. */
-  padding: 0.35rem 0.35rem;
+  /* A tab is a label plus a help icon; keep the inline padding tight so the
+     full set fits one row in the inspector column. */
+  padding: 0.35rem 0.2rem;
   border: 0;
   border-block-end: 2px solid transparent;
   background: transparent;
@@ -863,29 +991,25 @@ body {
   color: var(--muted);
 }
 
-/* Narrower windows keep all three panes: an inspector that disappears takes
-   every setting, menu and help icon with it, and the user has no way to bring
-   it back. Columns shrink instead, and below 60rem the inspector moves under
-   the preview as a full-width row. */
+/* The inspector never disappears: it holds every setting, menu and help icon.
+   Columns shrink instead, and below 60rem it moves under the preview as a
+   full-width row. */
 @media (max-width: 68rem) {
   .layout {
-    grid-template-columns: minmax(10rem, 13rem) minmax(0, 1fr) minmax(15rem, 18rem);
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, 19rem);
   }
 }
 
 @media (max-width: 60rem) {
   .layout {
-    grid-template-columns: minmax(10rem, 13rem) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) minmax(10rem, 42%);
   }
-  .pane--tree {
+  .pane--preview {
     grid-area: 1 / 1 / 2 / 2;
   }
-  .pane--preview {
-    grid-area: 1 / 2 / 2 / 3;
-  }
   .pane--panel {
-    grid-area: 2 / 1 / 3 / 3;
+    grid-area: 2 / 1 / 3 / 2;
     border-block-start: 1px solid var(--border);
   }
 }

@@ -1,4 +1,4 @@
-import { KEY, emit, isDisabled, needsId, options, part, setState } from './core.js';
+import { KEY, emit, isDisabled, needsId, options, part, setState, nonSubmit } from './core.js';
 
 /**
  * Disclosure: one trigger toggles one panel.
@@ -21,7 +21,7 @@ export const meta = {
 };
 
 export function mount(root) {
-  const trigger = part(root, 'trigger');
+  const trigger = nonSubmit(part(root, 'trigger'));
   const panel = part(root, 'panel');
   if (!trigger || !panel) throw new Error('[hf] disclosure needs [data-hf-part="trigger"] and [data-hf-part="panel"]');
 

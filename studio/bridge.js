@@ -68,6 +68,36 @@
       border-radius: 4px;
     }
     .__hf-drag { opacity: 0.35; outline: 2px dashed #4f46e5 !important; outline-offset: 1px !important; }
+
+    /* Page layout tab: the page's real content is hidden and only the
+       structure of the chosen frame is drawn. Everything is done from here,
+       never by editing the project's own CSS. */
+    html.__hf-skeleton body * { visibility: hidden !important; }
+    html.__hf-skeleton body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: 2147482998;
+      background: repeating-linear-gradient(
+        45deg,
+        rgb(79 70 229 / 0.05) 0 10px,
+        rgb(79 70 229 / 0.12) 10px 20px
+      );
+    }
+    html.__hf-skeleton .__hf-skel {
+      position: fixed;
+      z-index: 2147482999;
+      display: grid;
+      place-items: center;
+      box-sizing: border-box;
+      border: 2px dashed #4f46e5;
+      border-radius: 6px;
+      background: rgb(79 70 229 / 0.06);
+      color: #4f46e5;
+      font: 600 13px/1.2 ui-sans-serif, system-ui, sans-serif;
+      text-transform: lowercase;
+      visibility: visible !important;
+    }
   `;
   document.head.append(style);
 
@@ -91,6 +121,9 @@
 
   let selectedId = null;
   let selectedEl = null;
+  // Page layout tab: when set, the real page is hidden and these area boxes
+  // are drawn instead. `null` means normal editing.
+  let skeletonAreas = null;
   // Drag-to-move: press on a node, move past a threshold, release over a
   // target. Only the *intent* is computed here; the studio turns it into an
   // op through the normal pending/save path, so a drag is never a write.
@@ -99,6 +132,47 @@
   // Picking is the point of the studio, so it is on until the user turns it
   // off to interact with the page itself.
   let picking = true;
+
+  /**
+   * Draws (or clears) the wireframe overlay.
+   *
+   * Must survive the preview reloading: the studio re-sends `skeleton` after a
+   * rebuild, but a reload drops the DOM this painted into, so it is idempotent
+   * and re-creates its own layer every time.
+   */
+  function paintSkeleton() {
+    const html = document.documentElement;
+    const previous = html.querySelector('.__hf-skel-layer');
+    previous?.remove();
+
+    if (!skeletonAreas) {
+      html.classList.remove('__hf-skeleton');
+      return;
+    }
+    // Hide every other overlay: skeleton mode is a page-level view, not a
+    // node-level one.
+    hoverBox.hidden = true;
+    dropBox.hidden = true;
+    paintOverlay();
+    html.classList.add('__hf-skeleton');
+
+    const layer = document.createElement('div');
+    layer.className = '__hf-skel-layer';
+    // The layer itself must not hide: only the page's content does.
+    layer.style.visibility = 'visible';
+    for (const area of skeletonAreas) {
+      const box = document.createElement('div');
+      box.className = '__hf-skel';
+      box.dataset.area = area.name;
+      box.textContent = area.name;
+      box.style.left = `${area.x}%`;
+      box.style.top = `${area.y}%`;
+      box.style.width = `${area.w}%`;
+      box.style.height = `${area.h}%`;
+      layer.append(box);
+    }
+    html.append(layer);
+  }
 
   function post(type, payload = {}) {
     parent.postMessage({ source: 'hf-bridge', type, ...payload }, '*');
@@ -114,7 +188,9 @@
   }
 
   function paintOverlay() {
-    if (!selectedEl || !document.contains(selectedEl)) {
+    // The wireframe replaces the page visually; a selection box drawn over it
+    // would point at content the user cannot see.
+    if (skeletonAreas || !selectedEl || !document.contains(selectedEl)) {
       overlay.hidden = true;
       return;
     }
@@ -259,6 +335,7 @@
   }
 
   function onClick(event) {
+    if (skeletonAreas) return;
     if (!picking) return;
     // A drag ends with pointerup then click; the click must not re-select.
     if (drag?.active) return;
@@ -272,6 +349,7 @@
   }
 
   function onHover(event) {
+    if (skeletonAreas) return;
     const el = nodeOf(event.target);
     if (!el) {
       hoverBox.hidden = true;
@@ -437,6 +515,10 @@
     } else if (data.type === 'picking') {
       picking = Boolean(data.value);
       document.documentElement.style.cursor = picking ? 'crosshair' : '';
+    } else if (data.type === 'skeleton') {
+      // `areas` is absent (or null) when the user leaves the page layout tab.
+      skeletonAreas = Array.isArray(data.areas) ? data.areas : null;
+      paintSkeleton();
     } else if (data.type === 'reposition') {
       paintOverlay();
     }
