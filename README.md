@@ -88,7 +88,7 @@ node --test tests/*.test.mjs         # 의존성 없이 바로 실행 (e2e는 sk
 npm ci                               # e2e까지 돌릴 때만
 ```
 
-166개(브라우저 e2e 포함). Chromium이 없으면 e2e만 `skip`으로 표시되고 나머지는 그대로 실행된다.
+175개(브라우저 e2e 포함). Chromium이 없으면 e2e만 `skip`으로 표시되고 나머지는 그대로 실행된다.
 e2e까지 돌리려면 한 번만 설치한다:
 
 ```bash
@@ -450,7 +450,7 @@ export const meta = {
 ## 테스트
 
 ```bash
-npm test     # 166개: 스캐너, 편집 엔진, 저널, API, 서버, 호스팅/토큰/폴더 탐색, 프로필/레지스트리, 소유권 판정, 빈 DOM 부트스트랩, 제안 엔진, op 빌더, run-web.sh, 브라우저 e2e
+npm test     # 175개: 스캐너, 편집 엔진, 저널, API, 서버, 호스팅/토큰/폴더 탐색, 프로필/레지스트리, 소유권 판정, 빈 DOM 부트스트랩, 제안 엔진, op 빌더, run-web.sh, 브라우저 e2e
 ```
 
 `tests/edit.test.mjs`는 HTML/CSS 스캐너와 편집 엔진을 덮는다: 바이트 범위 정확성, 범위 밖 바이트 보존, 버전 불일치 거부, op별 가드(`VOID_NODE`, `NOT_A_LEAF`, `NO_RULE`, `BAD_SELECTOR`), CSS 배치 순차 적용, 재스캔 후 롤백.
