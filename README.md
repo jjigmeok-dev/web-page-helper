@@ -206,7 +206,8 @@ hf studio --root ~/work/my-site --proxy http://127.0.0.1:8000
 | `studio/` | 에디터 UI (정적 ESM, 빌드 없음) |
 | `tools/scan/` | HTML·CSS 스캐너 (모든 노드/선언의 바이트 범위) |
 | `tools/studio/` | 프로젝트 모델, 편집 엔진, 저널, API, 서버 |
-| `docs/EDITOR-PLAN.md` | 에디터 요구사항과 설계 |
+| `docs/EDITOR-PLAN.md` | 에디터 요구사항과 설계, 다음 사이클 게이트(§12) |
+| `docs/EDITOR-MEMO.md` | 2026-11-12 사이클 측정·교훈·안티패턴. 다음 사이클의 근거 |
 | `docs/web-platform.md` | 어떤 웹 API를 왜 쓰는지, Baseline 상태와 폴백 근거 |
 
 ### 파운데이션 계약
