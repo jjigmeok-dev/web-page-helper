@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120" viewBox="0 0 240 120" role="img" aria-label="자리 표시 그림">
+  <rect width="240" height="120" rx="12" fill="#e4e4e7" />
+  <circle cx="60" cy="52" r="18" fill="#a1a1aa" />
+  <path d="M28 96l44-38 34 26 30-22 44 34z" fill="#71717a" />
+</svg>

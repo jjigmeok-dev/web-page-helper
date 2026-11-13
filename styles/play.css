@@ -57,3 +57,12 @@
 .page {
   color: currentColor;
 }
+
+.page__figure {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-top: 1rem;
+  border: 1px solid var(--hf-border, #dddddd);
+  border-radius: var(--hf-radius, 0.75rem);
+}
